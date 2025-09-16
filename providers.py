@@ -245,6 +245,10 @@ class MaterialSymbolsProvider(IconProvider):
             "person", "person_add", "person_outline", "person_pin", "plus_one", "poll",
             "public", "school", "share", "whatshot",
 
+            # Education (additional school-related)
+            "school", "backpack", "calculate", "science", "menu_book", "auto_stories",
+            "library_books", "local_library", "cast_for_education", "school_outline",
+
             # Toggle
             "check_box", "check_box_outline_blank", "indeterminate_check_box", "radio_button_checked",
             "radio_button_unchecked", "star", "star_border", "star_half"
@@ -389,8 +393,8 @@ class MakiProvider(IconProvider):
             "paint", "pharmacy", "shoe", "shop", "toy",
 
             # Education & Culture
-            "art-gallery", "college", "library", "monument", "museum", "music", "school",
-            "theatre", "town-hall", "university",
+            "art-gallery", "college", "college-JP", "library", "monument", "museum", "music",
+            "school", "school-JP", "theatre", "town-hall", "university",
 
             # Symbols & Markers
             "arrow", "circle", "circle-stroked", "cross", "diamond", "heart", "hexagon",
@@ -424,13 +428,13 @@ class MakiProvider(IconProvider):
             icon = SvgIcon(
                 id=icon_name,
                 name=icon_name.replace('-', ' ').title(),
-                url=f"https://github.com/mapbox/maki/blob/main/icons/{icon_name}-15.svg",
-                preview_url=f"{self.raw_base}/icons/{icon_name}-15.svg",
+                url=f"https://github.com/mapbox/maki/blob/main/icons/{icon_name}.svg",
+                preview_url=f"{self.raw_base}/icons/{icon_name}.svg",
                 tags=[icon_name],
                 license="CC0 1.0 Universal",
                 attribution="Maki Icons by Mapbox",
                 provider=self.name,
-                download_url=f"{self.raw_base}/icons/{icon_name}-15.svg"
+                download_url=f"{self.raw_base}/icons/{icon_name}.svg"
             )
             icons.append(icon)
         
@@ -541,8 +545,8 @@ class FontAwesomeFreeProvider(IconProvider):
             "rupee-sign", "yen-sign", "bitcoin", "ethereum",
 
             # Education & Office
-            "university", "graduation-cap", "school", "chalkboard", "chalkboard-teacher",
-            "book", "book-open", "book-reader", "bookmark", "briefcase", "building",
+            "university", "book", "book-open", "book-open-reader", "bookmark",
+            "briefcase", "building", "book-atlas", "book-bookmark",
             "chart-bar", "chart-line", "chart-pie", "chart-area", "clipboard",
             "clipboard-check", "clipboard-list", "paperclip", "pen", "pen-alt",
             "pencil-alt", "pencil-ruler", "highlighter", "marker", "eraser",

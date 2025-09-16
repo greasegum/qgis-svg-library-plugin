@@ -67,34 +67,62 @@ class IconThumbnailWidget(QWidget):
             if self.icon.preview_url:
                 # Download the preview image
                 import urllib.request
+                import urllib.error
                 import tempfile
+                from qgis.PyQt.QtSvg import QSvgRenderer
+                from qgis.PyQt.QtGui import QPainter
 
                 # Create temp file for the image
                 with tempfile.NamedTemporaryFile(suffix='.svg', delete=False) as tmp_file:
                     try:
                         # Download the preview
                         response = urllib.request.urlopen(self.icon.preview_url, timeout=5)
-                        tmp_file.write(response.read())
+                        svg_data = response.read()
+                        tmp_file.write(svg_data)
                         tmp_file.flush()
 
-                        # Load into QPixmap
-                        pixmap = QPixmap(tmp_file.name)
-                        if not pixmap.isNull():
+                        # Try to render SVG using QSvgRenderer
+                        renderer = QSvgRenderer()
+                        if renderer.load(tmp_file.name):
+                            # Create a pixmap and paint the SVG onto it
+                            pixmap = QPixmap(64, 64)
+                            pixmap.fill(Qt.white)
+                            painter = QPainter(pixmap)
+                            renderer.render(painter)
+                            painter.end()
+
                             # Scale to fit the label
                             scaled_pixmap = pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                             self.preview_label.setPixmap(scaled_pixmap)
                         else:
-                            # If pixmap failed, show icon name
-                            self.preview_label.setText(self.icon.name[:3].upper())
-                            self.preview_label.setStyleSheet("""
-                                border: 1px solid gray;
-                                background: white;
-                                font-size: 16px;
-                                color: #333;
-                            """)
-                    except Exception:
-                        # If download fails, show text placeholder
+                            # Try as regular image
+                            pixmap = QPixmap(tmp_file.name)
+                            if not pixmap.isNull():
+                                scaled_pixmap = pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                self.preview_label.setPixmap(scaled_pixmap)
+                            else:
+                                # If both failed, show icon name
+                                self.preview_label.setText(self.icon.name[:3].upper())
+                                self.preview_label.setStyleSheet("""
+                                    border: 1px solid gray;
+                                    background: white;
+                                    font-size: 16px;
+                                    color: #333;
+                                """)
+                    except urllib.error.URLError as e:
+                        # URL error - show text with URL info for debugging
                         self.preview_label.setText(self.icon.name[:3].upper())
+                        self.preview_label.setToolTip(f"Failed to load: {self.icon.preview_url}\nError: {str(e)}")
+                        self.preview_label.setStyleSheet("""
+                            border: 1px solid orange;
+                            background: #fff5e6;
+                            font-size: 16px;
+                            color: #666;
+                        """)
+                    except Exception as e:
+                        # Other error - show text placeholder
+                        self.preview_label.setText(self.icon.name[:3].upper())
+                        self.preview_label.setToolTip(f"Error loading preview: {str(e)}")
                         self.preview_label.setStyleSheet("""
                             border: 1px solid gray;
                             background: white;
@@ -118,6 +146,7 @@ class IconThumbnailWidget(QWidget):
                 """)
         except Exception as e:
             self.preview_label.setText("?")
+            self.preview_label.setToolTip(f"Unexpected error: {str(e)}")
             self.preview_label.setStyleSheet("border: 1px solid red; background: #ffe6e6;")
         
     def mousePressEvent(self, event):
