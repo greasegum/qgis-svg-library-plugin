@@ -1,0 +1,26 @@
+# This file contains metadata for your plugin.
+
+[general]
+name=SVG Library Browser
+qgisMinimumVersion=3.0
+description=A QGIS plugin for browsing online SVG libraries including The Noun Project, Material Symbols, Maki, Font Awesome, and GitHub repositories
+version=1.0.0
+author=QGIS Community
+email=
+
+about=A dockable browser that connects to multiple icon providers (The Noun Project, Material Symbols, Maki, Font Awesome-Free, GitHub repos). Search for icons by keyword, browse paged thumbnails, and import SVGs directly into your QGIS profile. Attribution and licenses are tracked and can be integrated into project metadata for compliance.
+
+tracker=https://github.com/greasegum/qgis-svg-library-plugin/issues
+repository=https://github.com/greasegum/qgis-svg-library-plugin
+hasProcessingProvider=no
+changelog=1.0.0 - Initial release with support for multiple SVG icon providers
+
+tags=svg,icons,symbols,library,browser,noun project,material design,maki,font awesome
+
+homepage=https://github.com/greasegum/qgis-svg-library-plugin
+category=Plugins
+icon=icon.png
+experimental=False
+deprecated=False
+
+server=False
