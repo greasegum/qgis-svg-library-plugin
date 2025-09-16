@@ -20,6 +20,7 @@ from .providers import (NounProjectProvider, MaterialSymbolsProvider,
                        MakiProvider, FontAwesomeFreeProvider, GitHubRepoProvider)
 from .attribution_utils import AttributionManager, ProjectMetadataManager
 from .config_dialog import ConfigDialog
+from .icon_preview_dialog import IconPreviewDialog
 
 
 class IconThumbnailWidget(QWidget):
@@ -157,19 +158,30 @@ class IconThumbnailWidget(QWidget):
 
 class SearchWorker(QThread):
     """Worker thread for searching icons"""
-    
+
     resultsReady = pyqtSignal(dict)  # Dict of provider_name: SearchResult
-    
-    def __init__(self, provider_manager, query, page=1, per_page=20):
+
+    def __init__(self, provider_manager, query, page=1, per_page=20, selected_provider=None):
         super().__init__()
         self.provider_manager = provider_manager
         self.query = query
         self.page = page
         self.per_page = per_page
-        
+        self.selected_provider = selected_provider
+
     def run(self):
         """Run search in background thread"""
-        results = self.provider_manager.search_all(self.query, self.page, self.per_page)
+        if self.selected_provider:
+            # Search only the selected provider
+            provider = self.provider_manager.get_provider(self.selected_provider)
+            if provider:
+                result = provider.search(self.query, self.page, self.per_page)
+                results = {self.selected_provider: result}
+            else:
+                results = {}
+        else:
+            # Search all providers
+            results = self.provider_manager.search_all(self.query, self.page, self.per_page)
         self.resultsReady.emit(results)
 
 
@@ -328,13 +340,15 @@ class SvgLibraryDockWidget(QDockWidget):
         from qgis.PyQt.QtCore import QSettings
         settings = QSettings()
         
-        # Register providers with API keys from settings
-        noun_api_key = settings.value("svg_library/noun_api_key", "")
+        # Register The Noun Project provider
+        # Using hardcoded API key for testing (will use default in provider if not set)
+        noun_api_key = settings.value("svg_library/noun_api_key", "e6b1100db018427482300dc87cf31117")
         noun_secret = settings.value("svg_library/noun_secret", "")
-        if noun_api_key and noun_secret:
-            self.provider_manager.register_provider(
-                NounProjectProvider(noun_api_key, noun_secret)
-            )
+
+        # Always register The Noun Project (it will use hardcoded key if no secret)
+        self.provider_manager.register_provider(
+            NounProjectProvider(noun_api_key, noun_secret)
+        )
         
         # Register free providers
         self.provider_manager.register_provider(MaterialSymbolsProvider())
@@ -362,9 +376,8 @@ class SvgLibraryDockWidget(QDockWidget):
                 GitHubRepoProvider("tabler/tabler-icons", "icons")
             )
         
-        # Update provider combo
+        # Update provider combo (no "All Providers" option)
         self.provider_combo.clear()
-        self.provider_combo.addItem("All Providers", "all")
         for provider_name in self.provider_manager.providers.keys():
             self.provider_combo.addItem(provider_name, provider_name)
             
@@ -395,13 +408,17 @@ class SvgLibraryDockWidget(QDockWidget):
         self.progress_bar.setRange(0, 0)  # Indeterminate
         self.search_button.setEnabled(False)
         
+        # Get selected provider
+        selected_provider = self.provider_combo.currentData()
+
         # Start search worker
         per_page = self.per_page_spin.value()
         self.search_worker = SearchWorker(
-            self.provider_manager, 
-            self.current_query, 
-            self.current_page, 
-            per_page
+            self.provider_manager,
+            self.current_query,
+            self.current_page,
+            per_page,
+            selected_provider  # Pass selected provider
         )
         self.search_worker.resultsReady.connect(self.display_results)
         self.search_worker.finished.connect(self.search_finished)
@@ -487,62 +504,31 @@ class SvgLibraryDockWidget(QDockWidget):
         self.search_icons()
         
     def icon_clicked(self, icon):
-        """Handle icon click - download and optionally apply"""
+        """Handle icon click - show preview dialog"""
         try:
-            # Get QGIS SVG directory
-            svg_paths = QgsApplication.svgPaths()
-            if not svg_paths:
-                QMessageBox.warning(self, "Error", "No SVG paths configured in QGIS")
-                return
-                
-            # Use first writable SVG path (usually user profile)
-            svg_dir = svg_paths[0]
-            if not os.path.exists(svg_dir):
-                try:
-                    os.makedirs(svg_dir)
-                except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Cannot create SVG directory: {str(e)}")
-                    return
-                
-            # Create filename (sanitize for filesystem)
-            safe_provider = "".join(c for c in icon.provider if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            safe_id = "".join(c for c in icon.id if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            filename = f"{safe_provider}_{safe_id}.svg".replace(" ", "_")
-            file_path = os.path.join(svg_dir, filename)
-            
-            # Download SVG
-            provider = self.provider_manager.get_provider(icon.provider)
-            if provider and provider.download_svg(icon, file_path):
-                QMessageBox.information(self, "Success", 
-                                      f"SVG saved to: {file_path}\n\n"
-                                      f"Icon: {icon.name}\n"
-                                      f"Provider: {icon.provider}\n"
-                                      f"License: {icon.license}")
-                
-                # Add attribution
-                icon.file_path = file_path  # Store file path for attribution
-                self.add_attribution(icon)
-                
-                # Auto-save to project if enabled
-                from qgis.PyQt.QtCore import QSettings
-                settings = QSettings()
-                if settings.value("svg_library/auto_save_attributions", True, type=bool):
-                    self.save_attributions_to_project()
-                
-                # Optionally apply to selected layer
-                if self.auto_apply_check.isChecked():
-                    self.apply_to_layer(file_path, icon)
-                    
-            else:
-                QMessageBox.warning(self, "Error", 
-                                  f"Failed to download SVG from {icon.provider}\n\n"
-                                  f"This could be due to:\n"
-                                  f"• Network connectivity issues\n"
-                                  f"• Invalid or missing API credentials\n"
-                                  f"• Provider service unavailable")
-                
+            # Show preview dialog
+            from qgis.PyQt.QtWidgets import QDialog
+            dialog = IconPreviewDialog(icon, self.provider_manager, self)
+            if dialog.exec_() == QDialog.Accepted:
+                # Icon was imported, update attributions display
+                self.refresh_attributions()
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error downloading icon: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error showing icon preview: {str(e)}")
+
+    def refresh_attributions(self):
+        """Refresh the attribution display"""
+        try:
+            # Get all attributions from the project
+            from .attribution_utils import ProjectMetadataManager
+            attributions = ProjectMetadataManager.get_attributions_from_project()
+
+            # Update the display
+            self.attribution_text.clear()
+            for attr in attributions[-5:]:  # Show last 5 attributions
+                text = f"{attr.get('icon_name', 'Unknown')} - {attr.get('attribution_text', '')} ({attr.get('license', '')})"
+                self.attribution_text.append(text)
+        except Exception as e:
+            print(f"Error refreshing attributions: {e}")
             
     def add_attribution(self, icon):
         """Add attribution text"""
