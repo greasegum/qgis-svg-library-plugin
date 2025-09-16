@@ -16,15 +16,58 @@ import urllib.error
 
 from .icon_providers import IconProvider, SvgIcon, SearchResult
 
+try:
+    from qgis.PyQt.QtCore import QSettings
+    HAS_QGIS = True
+except ImportError:
+    HAS_QGIS = False
+
 
 class NounProjectProvider(IconProvider):
     """Provider for The Noun Project icons with OAuth 1.0a authentication"""
 
     def __init__(self, api_key: Optional[str] = None, secret: Optional[str] = None):
         super().__init__("The Noun Project", "https://api.thenounproject.com", api_key)
-        # For testing - hardcoded credentials (remove in production)
-        self.api_key = api_key or "e6b1100db018427482300dc87cf31117"
-        self.secret = secret or "YOUR_SECRET_HERE"  # You need to provide the secret
+        # Load from settings or environment variables - never hardcode
+        self.api_key = api_key or self._load_api_key()
+        self.secret = secret or self._load_secret()
+
+    def _load_api_key(self):
+        """Load API key from secure storage"""
+        # Try environment variable first (for CI/CD)
+        api_key = os.environ.get('NOUN_PROJECT_API_KEY')
+        if api_key:
+            return api_key
+
+        # Try QGIS settings if available
+        if HAS_QGIS:
+            settings = QSettings()
+            api_key = settings.value('svg_library/noun_api_key', '')
+            if api_key:
+                return api_key
+
+        # Return None if no key found - provider will be unavailable
+        return None
+
+    def _load_secret(self):
+        """Load API secret from secure storage"""
+        # Try environment variable first
+        secret = os.environ.get('NOUN_PROJECT_SECRET')
+        if secret:
+            return secret
+
+        # Try QGIS settings if available
+        if HAS_QGIS:
+            settings = QSettings()
+            secret = settings.value('svg_library/noun_secret', '')
+            if secret:
+                return secret
+
+        return None
+
+    def is_available(self) -> bool:
+        """Check if provider is properly configured"""
+        return bool(self.api_key and self.secret)
 
     def _generate_oauth_signature(self, method, url, params):
         """Generate OAuth 1.0a signature"""
@@ -64,6 +107,10 @@ class NounProjectProvider(IconProvider):
 
     def search(self, query: str, page: int = 1, per_page: int = 20) -> SearchResult:
         """Search The Noun Project API with OAuth authentication"""
+        if not self.is_available():
+            # Return empty result if not configured
+            return SearchResult([], 0, page, 0, False, False)
+
         try:
             # API endpoint
             endpoint = f"{self.base_url}/v2/icon"
