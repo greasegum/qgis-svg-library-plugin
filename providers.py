@@ -14,7 +14,11 @@ from urllib.parse import urlencode, quote, urlparse
 import urllib.request
 import urllib.error
 
-from .icon_providers import IconProvider, SvgIcon, SearchResult
+try:
+    from .icon_providers import IconProvider, SvgIcon, SearchResult
+except ImportError:
+    # For standalone testing
+    from icon_providers import IconProvider, SvgIcon, SearchResult
 
 
 class NounProjectProvider(IconProvider):
