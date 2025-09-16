@@ -4,8 +4,9 @@ SVG Library Browser Dock Widget
 
 import os
 import tempfile
+import urllib.request
 from qgis.PyQt import QtGui, QtWidgets, uic
-from qgis.PyQt.QtCore import pyqtSignal, QThread, QTimer, Qt
+from qgis.PyQt.QtCore import pyqtSignal, QThread, QTimer, Qt, QSettings
 from qgis.PyQt.QtWidgets import (QDockWidget, QVBoxLayout, QHBoxLayout, 
                                 QLineEdit, QPushButton, QComboBox, QScrollArea,
                                 QWidget, QLabel, QGridLayout, QMessageBox,
@@ -62,9 +63,19 @@ class IconThumbnailWidget(QWidget):
         
     def load_preview(self):
         """Load preview image from URL"""
-        # For now, just show a placeholder
-        # In a real implementation, you'd download the image asynchronously
-        self.preview_label.setText("SVG")
+        try:
+            # For SVG previews, create a simple text placeholder
+            # In a real implementation, you would download and render the SVG
+            self.preview_label.setText("📄")
+            self.preview_label.setStyleSheet("""
+                border: 1px solid gray; 
+                background: white; 
+                font-size: 24px;
+                color: #666;
+            """)
+        except Exception as e:
+            self.preview_label.setText("?")
+            self.preview_label.setStyleSheet("border: 1px solid red; background: #ffe6e6;")
         
     def mousePressEvent(self, event):
         """Handle click on thumbnail"""
@@ -415,27 +426,48 @@ class SvgLibraryDockWidget(QDockWidget):
             # Use first writable SVG path (usually user profile)
             svg_dir = svg_paths[0]
             if not os.path.exists(svg_dir):
-                os.makedirs(svg_dir)
+                try:
+                    os.makedirs(svg_dir)
+                except Exception as e:
+                    QMessageBox.warning(self, "Error", f"Cannot create SVG directory: {str(e)}")
+                    return
                 
-            # Create filename
-            filename = f"{icon.provider}_{icon.id}.svg".replace(" ", "_").replace("/", "_")
+            # Create filename (sanitize for filesystem)
+            safe_provider = "".join(c for c in icon.provider if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            safe_id = "".join(c for c in icon.id if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            filename = f"{safe_provider}_{safe_id}.svg".replace(" ", "_")
             file_path = os.path.join(svg_dir, filename)
             
             # Download SVG
             provider = self.provider_manager.get_provider(icon.provider)
             if provider and provider.download_svg(icon, file_path):
-                QMessageBox.information(self, "Success", f"SVG saved to: {file_path}")
+                QMessageBox.information(self, "Success", 
+                                      f"SVG saved to: {file_path}\n\n"
+                                      f"Icon: {icon.name}\n"
+                                      f"Provider: {icon.provider}\n"
+                                      f"License: {icon.license}")
                 
                 # Add attribution
                 icon.file_path = file_path  # Store file path for attribution
                 self.add_attribution(icon)
+                
+                # Auto-save to project if enabled
+                from qgis.PyQt.QtCore import QSettings
+                settings = QSettings()
+                if settings.value("svg_library/auto_save_attributions", True, type=bool):
+                    self.save_attributions_to_project()
                 
                 # Optionally apply to selected layer
                 if self.auto_apply_check.isChecked():
                     self.apply_to_layer(file_path, icon)
                     
             else:
-                QMessageBox.warning(self, "Error", "Failed to download SVG")
+                QMessageBox.warning(self, "Error", 
+                                  f"Failed to download SVG from {icon.provider}\n\n"
+                                  f"This could be due to:\n"
+                                  f"• Network connectivity issues\n"
+                                  f"• Invalid or missing API credentials\n"
+                                  f"• Provider service unavailable")
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error downloading icon: {str(e)}")
