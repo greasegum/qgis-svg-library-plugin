@@ -9,7 +9,7 @@ from urllib.parse import urlencode, quote
 import zipfile
 import tempfile
 
-from icon_providers import IconProvider, SvgIcon, SearchResult
+from .icon_providers import IconProvider, SvgIcon, SearchResult
 
 
 class NounProjectProvider(IconProvider):
