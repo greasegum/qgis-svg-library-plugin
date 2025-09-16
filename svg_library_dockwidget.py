@@ -64,15 +64,58 @@ class IconThumbnailWidget(QWidget):
     def load_preview(self):
         """Load preview image from URL"""
         try:
-            # For SVG previews, create a simple text placeholder
-            # In a real implementation, you would download and render the SVG
-            self.preview_label.setText("📄")
-            self.preview_label.setStyleSheet("""
-                border: 1px solid gray; 
-                background: white; 
-                font-size: 24px;
-                color: #666;
-            """)
+            if self.icon.preview_url:
+                # Download the preview image
+                import urllib.request
+                import tempfile
+
+                # Create temp file for the image
+                with tempfile.NamedTemporaryFile(suffix='.svg', delete=False) as tmp_file:
+                    try:
+                        # Download the preview
+                        response = urllib.request.urlopen(self.icon.preview_url, timeout=5)
+                        tmp_file.write(response.read())
+                        tmp_file.flush()
+
+                        # Load into QPixmap
+                        pixmap = QPixmap(tmp_file.name)
+                        if not pixmap.isNull():
+                            # Scale to fit the label
+                            scaled_pixmap = pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                            self.preview_label.setPixmap(scaled_pixmap)
+                        else:
+                            # If pixmap failed, show icon name
+                            self.preview_label.setText(self.icon.name[:3].upper())
+                            self.preview_label.setStyleSheet("""
+                                border: 1px solid gray;
+                                background: white;
+                                font-size: 16px;
+                                color: #333;
+                            """)
+                    except Exception:
+                        # If download fails, show text placeholder
+                        self.preview_label.setText(self.icon.name[:3].upper())
+                        self.preview_label.setStyleSheet("""
+                            border: 1px solid gray;
+                            background: white;
+                            font-size: 16px;
+                            color: #666;
+                        """)
+                    finally:
+                        # Clean up temp file
+                        try:
+                            os.unlink(tmp_file.name)
+                        except:
+                            pass
+            else:
+                # No preview URL, show text
+                self.preview_label.setText(self.icon.name[:3].upper())
+                self.preview_label.setStyleSheet("""
+                    border: 1px solid gray;
+                    background: white;
+                    font-size: 16px;
+                    color: #666;
+                """)
         except Exception as e:
             self.preview_label.setText("?")
             self.preview_label.setStyleSheet("border: 1px solid red; background: #ffe6e6;")
