@@ -142,13 +142,33 @@ class ProjectMetadataManager:
         """Load attributions from current QGIS project metadata"""
         project = QgsProject.instance()
         data = project.readEntry("svg_library", ProjectMetadataManager.METADATA_KEY)[0]
-        
+
         if data:
             try:
                 return json.loads(data)
             except:
                 return []
         return []
+
+    @staticmethod
+    def get_attributions_from_project() -> List[Dict[str, Any]]:
+        """Alias for load_attributions_from_project"""
+        return ProjectMetadataManager.load_attributions_from_project()
+
+    @staticmethod
+    def add_single_attribution(icon_data: Dict[str, Any]):
+        """Add a single attribution to project metadata"""
+        existing = ProjectMetadataManager.load_attributions_from_project()
+
+        # Check if already exists
+        icon_id = icon_data.get('id', '')
+        if not any(attr.get('id') == icon_id for attr in existing):
+            existing.append(icon_data)
+
+            # Save back to project
+            project = QgsProject.instance()
+            project.writeEntry("svg_library", ProjectMetadataManager.METADATA_KEY,
+                             json.dumps(existing))
         
     @staticmethod
     def clear_project_attributions():

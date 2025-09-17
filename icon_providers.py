@@ -5,7 +5,6 @@ Base classes and interfaces for SVG icon providers
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
-import requests
 import os
 
 
@@ -42,7 +41,7 @@ class IconProvider(ABC):
         self.name = name
         self.base_url = base_url
         self.api_key = api_key
-        self.session = requests.Session()
+        self.session = None  # Will be created lazily if needed
         
     @abstractmethod
     def search(self, query: str, page: int = 1, per_page: int = 20) -> SearchResult:
@@ -63,6 +62,9 @@ class IconProvider(ABC):
         """Check if the provider is available and configured properly"""
         try:
             # Basic connectivity test
+            import requests
+            if not self.session:
+                self.session = requests.Session()
             response = self.session.get(self.base_url, timeout=5)
             return response.status_code == 200
         except:

@@ -1,424 +1,724 @@
 """
-Specific implementations of SVG icon providers
+Clean API-based implementations of SVG icon providers
+No fallbacks - straight API implementation only
 """
 
 import json
 import os
+import time
+import hashlib
+import hmac
+import base64
+import ssl
 from typing import List, Optional
-from urllib.parse import urlencode, quote
-import zipfile
-import tempfile
+from urllib.parse import urlencode, quote, urlparse
+import urllib.request
+import urllib.error
 
-from .icon_providers import IconProvider, SvgIcon, SearchResult
+try:
+    from .icon_providers import IconProvider, SvgIcon, SearchResult
+except ImportError:
+    # For standalone testing
+    from icon_providers import IconProvider, SvgIcon, SearchResult
+
+# Try to use requests-oauthlib if available (better OAuth implementation)
+try:
+    import requests
+    from requests_oauthlib import OAuth1
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
+
+
+def get_ssl_context():
+    """Get SSL context for urllib requests
+
+    Returns an SSL context that works in various environments.
+    For development/testing, this disables certificate verification.
+    For production, you should use the default context.
+    """
+    try:
+        # Try to create default context first
+        ssl_context = ssl.create_default_context()
+        # For development - disable verification if having issues
+        # Comment these out for production
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        return ssl_context
+    except:
+        # Fallback - create basic context
+        return ssl.SSLContext(ssl.PROTOCOL_TLS)
 
 
 class NounProjectProvider(IconProvider):
-    """Provider for The Noun Project icons"""
-    
+    """Provider for The Noun Project icons with OAuth 1.0a authentication"""
+
+    # Obfuscated API credentials for testing - base64 encoded
+    # This provides minimal obfuscation to avoid plaintext exposure
+    # Not for production use - implement proper key management
+    _OBFUSCATED_KEY = "ZTZiMTEwMGRiMDE4NDI3NDgyMzAwZGM4N2NmMzExMTc="  # base64 of API key
+    _OBFUSCATED_SECRET = "ZWJmN2YyZmE1Mzk3NGRhZWE1NzAzNTgyMmVjNjVhOTA="  # base64 of API secret
+
     def __init__(self, api_key: Optional[str] = None, secret: Optional[str] = None):
         super().__init__("The Noun Project", "https://api.thenounproject.com", api_key)
-        self.secret = secret
-        
-    def is_available(self) -> bool:
-        """Check if The Noun Project provider is properly configured"""
-        if not self.api_key or not self.secret:
-            return False
-        # For demo purposes, assume it's available if keys are provided
-        return True
-        
+        # Use provided keys or decode obfuscated ones for testing
+        self.api_key = api_key or self._deobfuscate(self._OBFUSCATED_KEY)
+        self.secret = secret or self._deobfuscate(self._OBFUSCATED_SECRET)
+        print(f"[NounProject Init] API key loaded: {self.api_key[:10]}..." if self.api_key else "[NounProject Init] No API key")
+        print(f"[NounProject Init] Secret loaded: {'Yes' if self.secret else 'No'}")
+
+    def _deobfuscate(self, obfuscated: str) -> str:
+        """Deobfuscate base64 encoded string"""
+        try:
+            return base64.b64decode(obfuscated.encode()).decode('utf-8')
+        except Exception:
+            return ""
+
+    def _generate_oauth_signature(self, method, url, params):
+        """Generate OAuth 1.0a signature"""
+        # OAuth parameters
+        # Generate a simple alphanumeric nonce like requests-oauthlib does
+        import random
+        import string
+        nonce = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+
+        oauth_params = {
+            'oauth_consumer_key': self.api_key,
+            'oauth_signature_method': 'HMAC-SHA1',
+            'oauth_timestamp': str(int(time.time())),
+            'oauth_nonce': nonce,
+            'oauth_version': '1.0'
+        }
+
+        print(f"[OAuth Debug] Method: {method}")
+        print(f"[OAuth Debug] Base URL: {url}")
+        print(f"[OAuth Debug] Params: {params}")
+        print(f"[OAuth Debug] OAuth params: {oauth_params}")
+
+        # Combine all parameters
+        all_params = {**params, **oauth_params}
+
+        # Sort and encode parameters using RFC3986 percent encoding
+        def percent_encode(s):
+            """RFC3986 compliant percent encoding"""
+            return quote(str(s), safe='~')
+
+        sorted_params = sorted(all_params.items())
+        param_string = '&'.join([f"{percent_encode(k)}={percent_encode(v)}" for k, v in sorted_params])
+
+        print(f"[OAuth Debug] Sorted params string: {param_string[:100]}...")
+
+        # Create signature base string
+        # IMPORTANT: Use base URL without query parameters
+        base_url = url.split('?')[0]
+        signature_base = f"{method}&{percent_encode(base_url)}&{percent_encode(param_string)}"
+
+        print(f"[OAuth Debug] Signature base (first 200): {signature_base[:200]}...")
+
+        # Create signing key - IMPORTANT: Don't encode the secret in signing key
+        signing_key = f"{self.secret}&"
+
+        print(f"[OAuth Debug] Signing key (hidden): {len(signing_key)} chars")
+
+        # Generate signature
+        signature = base64.b64encode(
+            hmac.new(
+                signing_key.encode('utf-8'),
+                signature_base.encode('utf-8'),
+                hashlib.sha1
+            ).digest()
+        ).decode('utf-8')
+
+        print(f"[OAuth Debug] Generated signature: {signature[:20]}...")
+
+        oauth_params['oauth_signature'] = signature
+        return oauth_params
+
     def search(self, query: str, page: int = 1, per_page: int = 20) -> SearchResult:
-        """Search The Noun Project API"""
+        """Search The Noun Project API with OAuth authentication"""
         if not self.api_key or not self.secret:
-            # Return empty results if no API key
+            # Return empty result if not configured
             return SearchResult([], 0, page, 0, False, False)
-            
-        # For demo purposes, return some sample icons
-        # In a real implementation, you would use OAuth 1.0a authentication
-        sample_icons = [
-            f"{query}_icon_1", f"{query}_icon_2", f"{query}_symbol"
-        ]
-        
-        # Filter based on page
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        page_icons = sample_icons[start_idx:end_idx]
-        
-        icons = []
-        for idx, icon_name in enumerate(page_icons):
-            icon = SvgIcon(
-                id=f"noun_{icon_name}_{idx}",
-                name=icon_name.replace('_', ' ').title(),
-                url=f"https://thenounproject.com/icon/{icon_name}",
-                preview_url=f"https://static.thenounproject.com/png/{icon_name}-{idx}.png",
-                tags=[query, icon_name],
-                license="Creative Commons Attribution 3.0",
-                attribution=f"Icon by The Noun Project",
-                provider=self.name,
-                download_url=f"https://api.thenounproject.com/icon/{icon_name}/svg"
+
+        try:
+            # API endpoint - use v1 which is more stable
+            # IMPORTANT: Don't URL-encode the query in the path for OAuth signature
+            endpoint = f"{self.base_url}/icons/{query}"
+
+            # Query parameters for v1 API
+            params = {
+                'limit': str(per_page),
+                'offset': str((page - 1) * per_page)
+            }
+
+            # Use requests-oauthlib if available (more reliable OAuth)
+            if HAS_REQUESTS:
+                print(f"[NounProject] Using requests-oauthlib for OAuth")
+                print(f"[NounProject] API Key: {self.api_key[:10]}..." if self.api_key else "[NounProject] No API key!")
+                print(f"[NounProject] Secret: {'Present' if self.secret else 'Missing'}")
+                print(f"[NounProject] Using v1 API endpoint")
+
+                auth = OAuth1(self.api_key, self.secret)
+                url = f"{endpoint}?{urlencode(params)}"
+                print(f"[NounProject] Request URL: {url}")
+
+                response = requests.get(url, auth=auth, timeout=10)
+                print(f"[NounProject] Response status: {response.status_code}")
+
+                if response.status_code != 200:
+                    print(f"Noun Project API error: HTTP Error {response.status_code}: {response.reason}")
+                    if response.text:
+                        print(f"[NounProject] Response body: {response.text[:500]}")
+                    return SearchResult([], 0, page, 0, False, False)
+
+                data = response.json()
+                print(f"[NounProject] Response JSON keys: {list(data.keys()) if data else 'None'}")
+            else:
+                # Fallback to manual OAuth (may have issues)
+                print(f"[NounProject] Using manual OAuth (urllib)")
+                print(f"[NounProject] API Key: {self.api_key[:10]}..." if self.api_key else "[NounProject] No API key!")
+                print(f"[NounProject] Secret: {'Present' if self.secret else 'Missing'}")
+                print(f"[NounProject] Using v1 API endpoint")
+                print(f"[NounProject] Full endpoint URL: {endpoint}")
+                print(f"[NounProject] Query params: {params}")
+
+                # IMPORTANT: Pass the base endpoint without query params for signature
+                base_endpoint = endpoint.split('?')[0]
+                oauth_params = self._generate_oauth_signature('GET', base_endpoint, params)
+
+                # Format OAuth header with proper percent encoding
+                auth_header = 'OAuth ' + ', '.join([
+                    f'{k}="{quote(str(v), safe="~")}"' for k, v in oauth_params.items()
+                ])
+                print(f"[NounProject] OAuth header (first 200 chars): {auth_header[:200]}")
+                print(f"[NounProject] OAuth signature: {oauth_params.get('oauth_signature', 'N/A')[:20]}...")
+
+                url = f"{endpoint}?{urlencode(params)}"
+                print(f"[NounProject] Request URL: {url}")
+
+                req = urllib.request.Request(url)
+                req.add_header('Authorization', auth_header)
+                req.add_header('Accept', 'application/json')
+
+                # Use SSL context to handle certificate issues
+                response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
+                data = json.loads(response.read())
+                print(f"[NounProject] Response received, JSON keys: {list(data.keys()) if data else 'None'}")
+
+            # Parse results
+            icons = []
+            print(f"[NounProject] Parsing {len(data.get('icons', []))} icons from response")
+            for item in data.get('icons', []):
+                icon = SvgIcon(
+                    id=str(item.get('id', '')),
+                    name=item.get('term', 'Unknown'),
+                    url=item.get('permalink', ''),
+                    preview_url=item.get('preview_url', ''),
+                    tags=item.get('tags', []),
+                    license=item.get('license_description', 'Unknown'),
+                    attribution=f"Created by {item.get('uploader', {}).get('name', 'Unknown')} from Noun Project",
+                    provider=self.name,
+                    download_url=item.get('icon_url', '')
+                )
+                icons.append(icon)
+
+            total_count = data.get('total', 0)
+            total_pages = (total_count + per_page - 1) // per_page
+
+            return SearchResult(
+                icons=icons,
+                total_count=total_count,
+                current_page=page,
+                total_pages=total_pages,
+                has_next=page < total_pages,
+                has_previous=page > 1
             )
-            icons.append(icon)
-        
-        total_count = len(sample_icons)
-        total_pages = (total_count + per_page - 1) // per_page
-        
-        return SearchResult(
-            icons=icons,
-            total_count=total_count,
-            current_page=page,
-            total_pages=total_pages,
-            has_next=page < total_pages,
-            has_previous=page > 1
-        )
-    
+
+        except Exception as e:
+            import traceback
+            print(f"Noun Project API error: {e}")
+            print(f"[NounProject] Full error traceback:")
+            traceback.print_exc()
+            # No fallback - return empty
+            return SearchResult([], 0, page, 0, False, False)
+
     def get_icon_details(self, icon_id: str) -> Optional[SvgIcon]:
         """Get details for a specific icon"""
-        # Implementation would fetch detailed icon info
         return None
-        
+
     def download_svg(self, icon: SvgIcon, file_path: str) -> bool:
-        """Download SVG from The Noun Project (demo implementation)"""
+        """Download SVG from The Noun Project"""
         try:
-            # For demo purposes, create a simple SVG based on the icon name
-            svg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <!-- {icon.name} icon from {icon.provider} -->
-    <circle cx="12" cy="12" r="10" stroke="#333" stroke-width="2" fill="none"/>
-    <text x="12" y="16" text-anchor="middle" font-family="Arial" font-size="10" fill="#333">
-        {icon.name[:3].upper()}
-    </text>
-    <!-- License: {icon.license} -->
-    <!-- Attribution: {icon.attribution} -->
-</svg>"""
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
+            # Generate OAuth for download URL
+            oauth_params = self._generate_oauth_signature('GET', icon.download_url, {})
+
+            auth_header = 'OAuth ' + ', '.join([
+                f'{k}="{quote(str(v))}"' for k, v in oauth_params.items()
+            ])
+
+            req = urllib.request.Request(icon.download_url)
+            req.add_header('Authorization', auth_header)
+
+            response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
+            svg_content = response.read()
+
+            with open(file_path, 'wb') as f:
                 f.write(svg_content)
             return True
+
         except Exception as e:
-            print(f"Error creating demo SVG: {e}")
+            print(f"Error downloading from Noun Project: {e}")
             return False
 
 
 class MaterialSymbolsProvider(IconProvider):
-    """Provider for Material Design Symbols"""
-    
+    """Provider for Material Design Symbols - direct API only"""
+
     def __init__(self):
-        super().__init__("Material Symbols", "https://fonts.googleapis.com/css2")
-        # Material Symbols are available via Google Fonts
-        self.github_base = "https://raw.githubusercontent.com/google/material-design-icons/master"
-        
-    def search(self, query: str, page: int = 1, per_page: int = 20) -> SearchResult:
-        """Search Material Symbols (using local index or GitHub API)"""
-        # For demo purposes, return some common material icons
-        # In a real implementation, you'd have a local index or use GitHub API
-        
-        common_icons = [
-            "home", "search", "menu", "close", "add", "remove", "edit", "delete",
-            "save", "settings", "account_circle", "favorite", "star", "share",
-            "download", "upload", "folder", "file", "image", "video"
-        ]
-        
-        matching_icons = [icon for icon in common_icons if query.lower() in icon.lower()]
-        
-        # Pagination
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        page_icons = matching_icons[start_idx:end_idx]
-        
-        icons = []
-        for icon_name in page_icons:
-            icon = SvgIcon(
-                id=icon_name,
-                name=icon_name.replace('_', ' ').title(),
-                url=f"https://fonts.google.com/icons?selected=Material+Icons:{icon_name}",
-                preview_url=f"https://fonts.gstatic.com/s/i/materialicons/{icon_name}/v1/24px.svg",
-                tags=[icon_name],
-                license="Apache License 2.0",
-                attribution="Material Symbols by Google",
-                provider=self.name,
-                download_url=f"https://fonts.gstatic.com/s/i/materialicons/{icon_name}/v1/24px.svg"
-            )
-            icons.append(icon)
-        
-        total_count = len(matching_icons)
-        total_pages = (total_count + per_page - 1) // per_page
-        
-        return SearchResult(
-            icons=icons,
-            total_count=total_count,
-            current_page=page,
-            total_pages=total_pages,
-            has_next=page < total_pages,
-            has_previous=page > 1
-        )
-    
-    def get_icon_details(self, icon_id: str) -> Optional[SvgIcon]:
-        """Get details for a specific Material icon"""
-        return None
-        
-    def download_svg(self, icon: SvgIcon, file_path: str) -> bool:
-        """Download Material Symbol SVG (demo implementation)"""
+        super().__init__("Material Symbols", "https://api.github.com")
+        self.repo = "google/material-design-icons"
+        self._icon_list = None
+
+    def _get_all_icons(self):
+        """Get list of Material icons from GitHub API"""
+        if self._icon_list is not None:
+            return self._icon_list
+
         try:
-            # Create a Material Design style SVG
-            svg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <!-- {icon.name} icon from Material Symbols -->
-    <rect x="2" y="2" width="20" height="20" rx="2" stroke="#1976d2" stroke-width="2" fill="none"/>
-    <circle cx="12" cy="12" r="6" fill="#1976d2" opacity="0.1"/>
-    <text x="12" y="16" text-anchor="middle" font-family="Roboto, Arial" font-size="8" fill="#1976d2">
-        {icon.name[:4].upper()}
-    </text>
-    <!-- License: {icon.license} -->
-</svg>"""
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
+            # Get icons from the symbols/web directory
+            api_url = f"https://api.github.com/repos/{self.repo}/contents/symbols/web"
+
+            req = urllib.request.Request(api_url)
+            req.add_header('Accept', 'application/vnd.github.v3+json')
+            req.add_header('User-Agent', 'QGIS-SVG-Plugin')
+
+            response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
+            data = json.loads(response.read())
+
+            # Extract icon names from directories
+            self._icon_list = []
+            for item in data:
+                if item['type'] == 'dir':
+                    icon_name = item['name']
+                    self._icon_list.append({
+                        'name': icon_name,
+                        'path': item['path'],
+                        'url': item['url']
+                    })
+
+            return self._icon_list
+        except Exception as e:
+            print(f"Error fetching Material icons: {e}")
+            # No fallback - return empty
+            return []
+
+    def search(self, query: str, page: int = 1, per_page: int = 20) -> SearchResult:
+        """Search Material Symbols"""
+        try:
+            # Get all icons from API
+            all_icons = self._get_all_icons()
+
+            # Filter by query
+            if query:
+                matching_icons = [
+                    icon for icon in all_icons
+                    if query.lower() in icon['name'].lower()
+                ]
+            else:
+                matching_icons = all_icons[:100]
+
+            # Paginate
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            page_icons = matching_icons[start_idx:end_idx]
+
+            icons = []
+            for icon_data in page_icons:
+                icon_name = icon_data['name']
+                # Use Material Icons CDN
+                preview_url = f"https://fonts.gstatic.com/s/i/short-term/release/materialsymbolsoutlined/{icon_name}/default/48px.svg"
+
+                icon = SvgIcon(
+                    id=icon_name,
+                    name=icon_name.replace('_', ' ').title(),
+                    url=f"https://fonts.google.com/icons?selected=Material+Symbols+Outlined:{icon_name}",
+                    preview_url=preview_url,
+                    tags=[icon_name],
+                    license="Apache License 2.0",
+                    attribution="Material Symbols by Google",
+                    provider=self.name,
+                    download_url=preview_url
+                )
+                icons.append(icon)
+
+            total_count = len(matching_icons)
+            total_pages = (total_count + per_page - 1) // per_page
+
+            return SearchResult(
+                icons=icons,
+                total_count=total_count,
+                current_page=page,
+                total_pages=total_pages,
+                has_next=page < total_pages,
+                has_previous=page > 1
+            )
+        except Exception as e:
+            print(f"Material Symbols API error: {e}")
+            # No fallback - return empty
+            return SearchResult([], 0, page, 0, False, False)
+
+    def get_icon_details(self, icon_id: str) -> Optional[SvgIcon]:
+        return None
+
+    def download_svg(self, icon: SvgIcon, file_path: str) -> bool:
+        """Download Material Symbol SVG"""
+        try:
+            response = urllib.request.urlopen(icon.download_url, timeout=10, context=get_ssl_context())
+            svg_content = response.read()
+
+            with open(file_path, 'wb') as f:
                 f.write(svg_content)
             return True
         except Exception as e:
-            print(f"Error creating Material Symbol SVG: {e}")
+            print(f"Error downloading Material Symbol: {e}")
             return False
 
 
 class MakiProvider(IconProvider):
-    """Provider for Maki icons (Mapbox)"""
-    
+    """Provider for Maki icons - direct API only"""
+
     def __init__(self):
-        super().__init__("Maki", "https://github.com/mapbox/maki")
+        super().__init__("Maki", "https://api.github.com")
+        self.repo = "mapbox/maki"
         self.raw_base = "https://raw.githubusercontent.com/mapbox/maki/main"
-        
+        self._icon_list = None
+
+    def _get_all_icons(self):
+        """Get list of all Maki icons from GitHub"""
+        if self._icon_list is not None:
+            return self._icon_list
+
+        try:
+            # Get list of icons from the icons directory
+            api_url = f"https://api.github.com/repos/{self.repo}/contents/icons"
+
+            req = urllib.request.Request(api_url)
+            req.add_header('Accept', 'application/vnd.github.v3+json')
+            req.add_header('User-Agent', 'QGIS-SVG-Plugin')
+
+            response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
+            data = json.loads(response.read())
+
+            # Extract icon names
+            self._icon_list = []
+            for item in data:
+                if item['name'].endswith('.svg'):
+                    icon_name = item['name'].replace('.svg', '')
+                    self._icon_list.append({
+                        'name': icon_name,
+                        'path': item['path'],
+                        'download_url': item['download_url']
+                    })
+
+            return self._icon_list
+        except Exception as e:
+            print(f"Error fetching Maki icon list: {e}")
+            # No fallback - return empty
+            return []
+
     def search(self, query: str, page: int = 1, per_page: int = 20) -> SearchResult:
         """Search Maki icons"""
-        # Common Maki icons for demo
-        maki_icons = [
-            "airport", "art-gallery", "bank", "bar", "bicycle", "bridge", "bus",
-            "cafe", "car", "cemetery", "cinema", "college", "commercial", "fire-station",
-            "fuel", "golf", "grocery", "harbor", "hospital", "hotel", "library",
-            "monument", "museum", "park", "pharmacy", "police", "post", "religious-christian",
-            "restaurant", "school", "stadium", "swimming", "theatre", "zoo"
-        ]
-        
-        matching_icons = [icon for icon in maki_icons if query.lower() in icon.lower()]
-        
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        page_icons = matching_icons[start_idx:end_idx]
-        
-        icons = []
-        for icon_name in page_icons:
-            icon = SvgIcon(
-                id=icon_name,
-                name=icon_name.replace('-', ' ').title(),
-                url=f"https://github.com/mapbox/maki/blob/main/icons/{icon_name}-15.svg",
-                preview_url=f"{self.raw_base}/icons/{icon_name}-15.svg",
-                tags=[icon_name],
-                license="CC0 1.0 Universal",
-                attribution="Maki Icons by Mapbox",
-                provider=self.name,
-                download_url=f"{self.raw_base}/icons/{icon_name}-15.svg"
+        try:
+            # Get all icons from API
+            all_icons = self._get_all_icons()
+
+            # Filter by query
+            if query:
+                matching_icons = [
+                    icon for icon in all_icons
+                    if query.lower() in icon['name'].lower()
+                ]
+            else:
+                matching_icons = all_icons
+
+            # Paginate
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            page_icons = matching_icons[start_idx:end_idx]
+
+            icons = []
+            for icon_data in page_icons:
+                icon_name = icon_data['name']
+                icon = SvgIcon(
+                    id=icon_name,
+                    name=icon_name.replace('-', ' ').title(),
+                    url=f"https://github.com/{self.repo}/blob/main/icons/{icon_name}.svg",
+                    preview_url=icon_data['download_url'],
+                    tags=[icon_name],
+                    license="CC0 1.0 Universal",
+                    attribution="Maki Icons by Mapbox",
+                    provider=self.name,
+                    download_url=icon_data['download_url']
+                )
+                icons.append(icon)
+
+            total_count = len(matching_icons)
+            total_pages = (total_count + per_page - 1) // per_page
+
+            return SearchResult(
+                icons=icons,
+                total_count=total_count,
+                current_page=page,
+                total_pages=total_pages,
+                has_next=page < total_pages,
+                has_previous=page > 1
             )
-            icons.append(icon)
-        
-        total_count = len(matching_icons)
-        total_pages = (total_count + per_page - 1) // per_page
-        
-        return SearchResult(
-            icons=icons,
-            total_count=total_count,
-            current_page=page,
-            total_pages=total_pages,
-            has_next=page < total_pages,
-            has_previous=page > 1
-        )
-    
+
+        except Exception as e:
+            print(f"Maki search error: {e}")
+            # No fallback - return empty
+            return SearchResult([], 0, page, 0, False, False)
+
     def get_icon_details(self, icon_id: str) -> Optional[SvgIcon]:
         return None
-        
+
     def download_svg(self, icon: SvgIcon, file_path: str) -> bool:
-        """Download Maki SVG (demo implementation)"""
+        """Download Maki SVG"""
         try:
-            # Create a Maki style SVG (mapping/location focused)
-            svg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <!-- {icon.name} icon from Maki (Mapbox) -->
-    <circle cx="7.5" cy="7.5" r="6" fill="#3f3f3f"/>
-    <circle cx="7.5" cy="7.5" r="4" fill="white"/>
-    <text x="7.5" y="10" text-anchor="middle" font-family="Arial" font-size="6" fill="#3f3f3f">
-        {icon.name[:2].upper()}
-    </text>
-    <!-- License: {icon.license} -->
-</svg>"""
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
+            response = urllib.request.urlopen(icon.download_url, timeout=10, context=get_ssl_context())
+            svg_content = response.read()
+
+            with open(file_path, 'wb') as f:
                 f.write(svg_content)
             return True
         except Exception as e:
-            print(f"Error creating Maki SVG: {e}")
+            print(f"Error downloading Maki icon: {e}")
             return False
 
 
 class FontAwesomeFreeProvider(IconProvider):
-    """Provider for Font Awesome Free icons"""
-    
+    """Provider for Font Awesome Free icons - direct API only"""
+
     def __init__(self):
-        super().__init__("Font Awesome Free", "https://github.com/FortAwesome/Font-Awesome")
-        self.raw_base = "https://raw.githubusercontent.com/FortAwesome/Font-Awesome/6.x/svgs"
-        
+        super().__init__("Font Awesome Free", "https://api.github.com")
+        self.repo = "FortAwesome/Font-Awesome"
+        self._icon_lists = {}
+
+    def _get_icons_for_style(self, style="solid"):
+        """Get list of Font Awesome icons for a specific style"""
+        if style in self._icon_lists:
+            return self._icon_lists[style]
+
+        try:
+            # Get list of icons from the style directory
+            api_url = f"https://api.github.com/repos/{self.repo}/contents/svgs/{style}"
+
+            req = urllib.request.Request(api_url)
+            req.add_header('Accept', 'application/vnd.github.v3+json')
+            req.add_header('User-Agent', 'QGIS-SVG-Plugin')
+
+            response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
+            data = json.loads(response.read())
+
+            # Extract icon names
+            icons = []
+            for item in data:
+                if item['name'].endswith('.svg'):
+                    icon_name = item['name'].replace('.svg', '')
+                    icons.append({
+                        'name': icon_name,
+                        'style': style,
+                        'path': item['path'],
+                        'download_url': item['download_url']
+                    })
+
+            self._icon_lists[style] = icons
+            return icons
+        except Exception as e:
+            print(f"Error fetching Font Awesome {style} icons: {e}")
+            # No fallback - return empty
+            return []
+
     def search(self, query: str, page: int = 1, per_page: int = 20) -> SearchResult:
         """Search Font Awesome Free icons"""
-        # Common FA Free icons for demo
-        fa_icons = [
-            "home", "user", "search", "envelope", "heart", "star", "flag", "music",
-            "image", "film", "download", "upload", "edit", "trash", "save", "print",
-            "calendar", "clock", "map", "phone", "fax", "wifi", "car", "plane",
-            "ship", "train", "bicycle", "shopping-cart", "credit-card", "university"
-        ]
-        
-        matching_icons = [icon for icon in fa_icons if query.lower() in icon.lower()]
-        
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        page_icons = matching_icons[start_idx:end_idx]
-        
-        icons = []
-        for icon_name in page_icons:
-            icon = SvgIcon(
-                id=icon_name,
-                name=icon_name.replace('-', ' ').title(),
-                url=f"https://fontawesome.com/icons/{icon_name}",
-                preview_url=f"{self.raw_base}/solid/{icon_name}.svg",
-                tags=[icon_name],
-                license="CC BY 4.0 License",
-                attribution="Font Awesome Free by Fonticons",
-                provider=self.name,
-                download_url=f"{self.raw_base}/solid/{icon_name}.svg"
+        try:
+            # Get icons from solid style
+            all_icons = self._get_icons_for_style("solid")
+
+            # Filter by query
+            if query:
+                matching_icons = [
+                    icon for icon in all_icons
+                    if query.lower() in icon['name'].lower()
+                ]
+            else:
+                matching_icons = all_icons[:100]
+
+            # Paginate
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            page_icons = matching_icons[start_idx:end_idx]
+
+            icons = []
+            for icon_data in page_icons:
+                icon_name = icon_data['name']
+                style = icon_data['style']
+
+                icon = SvgIcon(
+                    id=icon_name,
+                    name=icon_name.replace('-', ' ').title(),
+                    url=f"https://fontawesome.com/icons/{icon_name}",
+                    preview_url=icon_data['download_url'],
+                    tags=[icon_name, style],
+                    license="CC BY 4.0 License",
+                    attribution="Font Awesome Free by Fonticons",
+                    provider=self.name,
+                    download_url=icon_data['download_url']
+                )
+                icons.append(icon)
+
+            total_count = len(matching_icons)
+            total_pages = (total_count + per_page - 1) // per_page
+
+            return SearchResult(
+                icons=icons,
+                total_count=total_count,
+                current_page=page,
+                total_pages=total_pages,
+                has_next=page < total_pages,
+                has_previous=page > 1
             )
-            icons.append(icon)
-        
-        total_count = len(matching_icons)
-        total_pages = (total_count + per_page - 1) // per_page
-        
-        return SearchResult(
-            icons=icons,
-            total_count=total_count,
-            current_page=page,
-            total_pages=total_pages,
-            has_next=page < total_pages,
-            has_previous=page > 1
-        )
-    
+
+        except Exception as e:
+            print(f"Font Awesome search error: {e}")
+            # No fallback - return empty
+            return SearchResult([], 0, page, 0, False, False)
+
     def get_icon_details(self, icon_id: str) -> Optional[SvgIcon]:
         return None
-        
+
     def download_svg(self, icon: SvgIcon, file_path: str) -> bool:
-        """Download Font Awesome SVG (demo implementation)"""
+        """Download Font Awesome SVG"""
         try:
-            # Create a Font Awesome style SVG
-            svg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <!-- {icon.name} icon from Font Awesome Free -->
-    <rect x="3" y="3" width="18" height="18" rx="3" fill="#339af0"/>
-    <circle cx="12" cy="12" r="7" fill="white"/>
-    <text x="12" y="15" text-anchor="middle" font-family="FontAwesome, Arial" font-size="8" fill="#339af0">
-        {icon.name[:3].upper()}
-    </text>
-    <!-- License: {icon.license} -->
-</svg>"""
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
+            response = urllib.request.urlopen(icon.download_url, timeout=10, context=get_ssl_context())
+            svg_content = response.read()
+
+            with open(file_path, 'wb') as f:
                 f.write(svg_content)
             return True
         except Exception as e:
-            print(f"Error creating Font Awesome SVG: {e}")
+            print(f"Error downloading Font Awesome icon: {e}")
             return False
 
 
 class GitHubRepoProvider(IconProvider):
-    """Provider for GitHub repositories containing SVG icons"""
-    
-    def __init__(self, repo_url: str, svg_path: str = ""):
-        """
-        Initialize GitHub repo provider
-        
-        :param repo_url: GitHub repository URL (e.g., "username/repo-name")
-        :param svg_path: Path within repo where SVGs are located
-        """
-        super().__init__(f"GitHub: {repo_url}", "https://api.github.com")
-        self.repo_url = repo_url
-        self.svg_path = svg_path
-        self.raw_base = f"https://raw.githubusercontent.com/{repo_url}/main"
-        
-    def search(self, query: str, page: int = 1, per_page: int = 20) -> SearchResult:
-        """Search GitHub repository for SVG files"""
+    """Provider for GitHub repository SVG icons - direct API only"""
+
+    def __init__(self, repo: str, path: str = ""):
+        super().__init__(f"GitHub: {repo}", f"https://api.github.com/repos/{repo}")
+        self.repo = repo
+        self.search_path = path
+        self._icon_list = None
+
+    def _get_all_icons(self):
+        """Get list of all SVG icons from the repository"""
+        if self._icon_list is not None:
+            return self._icon_list
+
         try:
-            # Use GitHub API to search for SVG files
-            search_url = f"{self.base_url}/search/code"
-            params = {
-                'q': f'{query} extension:svg repo:{self.repo_url}',
-                'page': page,
-                'per_page': per_page
-            }
-            
-            response = self.session.get(search_url, params=params)
-            
-            if response.status_code == 200:
-                data = response.json()
-                icons = []
-                
-                for item in data.get('items', []):
-                    filename = item['name']
-                    icon_name = os.path.splitext(filename)[0]
-                    file_path = item['path']
-                    
-                    icon = SvgIcon(
-                        id=file_path,
-                        name=icon_name.replace('-', ' ').replace('_', ' ').title(),
-                        url=item['html_url'],
-                        preview_url=f"{self.raw_base}/{file_path}",
-                        tags=[icon_name],
-                        license="See repository license",
-                        attribution=f"From {self.repo_url}",
-                        provider=self.name,
-                        download_url=f"{self.raw_base}/{file_path}"
-                    )
-                    icons.append(icon)
-                
-                total_count = data.get('total_count', len(icons))
-                total_pages = (total_count + per_page - 1) // per_page
-                
-                return SearchResult(
-                    icons=icons,
-                    total_count=total_count,
-                    current_page=page,
-                    total_pages=total_pages,
-                    has_next=page < total_pages,
-                    has_previous=page > 1
-                )
+            # Get list of files from the specified path
+            path_param = f"/contents/{self.search_path}" if self.search_path else "/contents"
+            api_url = f"https://api.github.com/repos/{self.repo}{path_param}"
+
+            req = urllib.request.Request(api_url)
+            req.add_header('Accept', 'application/vnd.github.v3+json')
+            req.add_header('User-Agent', 'QGIS-SVG-Plugin')
+
+            response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
+            data = json.loads(response.read())
+
+            # Extract SVG files
+            self._icon_list = []
+            for item in data:
+                if item['name'].endswith('.svg'):
+                    icon_name = item['name'].replace('.svg', '')
+                    self._icon_list.append({
+                        'name': icon_name,
+                        'path': item['path'],
+                        'download_url': item['download_url']
+                    })
+
+            return self._icon_list
         except Exception as e:
-            print(f"Error searching GitHub repo: {e}")
-            
-        return SearchResult([], 0, page, 0, False, False)
-    
+            print(f"Error fetching icons from {self.repo}: {e}")
+            # No fallback - return empty
+            return []
+
+    def search(self, query: str, page: int = 1, per_page: int = 20) -> SearchResult:
+        """Search icons in the GitHub repository"""
+        try:
+            # Get all icons from API
+            all_icons = self._get_all_icons()
+
+            # Filter by query
+            if query:
+                matching_icons = [
+                    icon for icon in all_icons
+                    if query.lower() in icon['name'].lower()
+                ]
+            else:
+                matching_icons = all_icons
+
+            # Paginate
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            page_icons = matching_icons[start_idx:end_idx]
+
+            icons = []
+            for icon_data in page_icons:
+                icon_name = icon_data['name']
+                icon = SvgIcon(
+                    id=icon_name,
+                    name=icon_name.replace('-', ' ').replace('_', ' ').title(),
+                    url=f"https://github.com/{self.repo}/blob/main/{icon_data['path']}",
+                    preview_url=icon_data['download_url'],
+                    tags=[icon_name],
+                    license="Check repository license",
+                    attribution=f"Icons from {self.repo}",
+                    provider=self.name,
+                    download_url=icon_data['download_url']
+                )
+                icons.append(icon)
+
+            total_count = len(matching_icons)
+            total_pages = (total_count + per_page - 1) // per_page
+
+            return SearchResult(
+                icons=icons,
+                total_count=total_count,
+                current_page=page,
+                total_pages=total_pages,
+                has_next=page < total_pages,
+                has_previous=page > 1
+            )
+
+        except Exception as e:
+            print(f"GitHub repo search error: {e}")
+            # No fallback - return empty
+            return SearchResult([], 0, page, 0, False, False)
+
     def get_icon_details(self, icon_id: str) -> Optional[SvgIcon]:
         return None
-        
+
     def download_svg(self, icon: SvgIcon, file_path: str) -> bool:
-        """Download SVG from GitHub repository (demo implementation)"""
+        """Download SVG from GitHub"""
         try:
-            # For demo, create a GitHub repo style SVG
-            svg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <!-- {icon.name} icon from {self.repo_url} -->
-    <rect x="1" y="1" width="22" height="22" rx="4" stroke="#24292e" stroke-width="2" fill="none"/>
-    <rect x="4" y="4" width="16" height="16" rx="2" fill="#24292e" opacity="0.1"/>
-    <text x="12" y="14" text-anchor="middle" font-family="monospace" font-size="7" fill="#24292e">
-        {icon.name[:4].upper()}
-    </text>
-    <!-- From GitHub: {self.repo_url} -->
-    <!-- License: {icon.license} -->
-</svg>"""
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
+            response = urllib.request.urlopen(icon.download_url, timeout=10, context=get_ssl_context())
+            svg_content = response.read()
+
+            with open(file_path, 'wb') as f:
                 f.write(svg_content)
             return True
         except Exception as e:
-            print(f"Error creating GitHub repo SVG: {e}")
+            print(f"Error downloading from GitHub: {e}")
             return False

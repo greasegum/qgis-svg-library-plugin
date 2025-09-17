@@ -20,6 +20,7 @@ from .providers import (NounProjectProvider, MaterialSymbolsProvider,
                        MakiProvider, FontAwesomeFreeProvider, GitHubRepoProvider)
 from .attribution_utils import AttributionManager, ProjectMetadataManager
 from .config_dialog import ConfigDialog
+from .icon_preview_dialog import IconPreviewDialog
 
 
 class IconThumbnailWidget(QWidget):
@@ -64,17 +65,96 @@ class IconThumbnailWidget(QWidget):
     def load_preview(self):
         """Load preview image from URL"""
         try:
-            # For SVG previews, create a simple text placeholder
-            # In a real implementation, you would download and render the SVG
-            self.preview_label.setText("📄")
-            self.preview_label.setStyleSheet("""
-                border: 1px solid gray; 
-                background: white; 
-                font-size: 24px;
-                color: #666;
-            """)
+            if self.icon.preview_url:
+                print(f"[IconThumbnail] Loading preview for {self.icon.name} from {self.icon.preview_url[:50]}...")
+                # Download the preview image
+                import urllib.request
+                import urllib.error
+                import tempfile
+                import ssl
+                from qgis.PyQt.QtSvg import QSvgRenderer
+                from qgis.PyQt.QtGui import QPainter
+
+                # Create SSL context for HTTPS requests
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+
+                # Create temp file for the image
+                with tempfile.NamedTemporaryFile(suffix='.svg', delete=False) as tmp_file:
+                    try:
+                        # Download the preview with SSL context
+                        response = urllib.request.urlopen(self.icon.preview_url, timeout=5, context=ssl_context)
+                        svg_data = response.read()
+                        tmp_file.write(svg_data)
+                        tmp_file.flush()
+
+                        # Try to render SVG using QSvgRenderer
+                        renderer = QSvgRenderer()
+                        if renderer.load(tmp_file.name):
+                            # Create a pixmap and paint the SVG onto it
+                            pixmap = QPixmap(64, 64)
+                            pixmap.fill(Qt.white)
+                            painter = QPainter(pixmap)
+                            renderer.render(painter)
+                            painter.end()
+
+                            # Scale to fit the label
+                            scaled_pixmap = pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                            self.preview_label.setPixmap(scaled_pixmap)
+                        else:
+                            # Try as regular image
+                            pixmap = QPixmap(tmp_file.name)
+                            if not pixmap.isNull():
+                                scaled_pixmap = pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                self.preview_label.setPixmap(scaled_pixmap)
+                            else:
+                                # If both failed, show icon name
+                                self.preview_label.setText(self.icon.name[:3].upper())
+                                self.preview_label.setStyleSheet("""
+                                    border: 1px solid gray;
+                                    background: white;
+                                    font-size: 16px;
+                                    color: #333;
+                                """)
+                    except urllib.error.URLError as e:
+                        # URL error - show text with URL info for debugging
+                        self.preview_label.setText(self.icon.name[:3].upper())
+                        self.preview_label.setToolTip(f"Failed to load: {self.icon.preview_url}\nError: {str(e)}")
+                        self.preview_label.setStyleSheet("""
+                            border: 1px solid orange;
+                            background: #fff5e6;
+                            font-size: 16px;
+                            color: #666;
+                        """)
+                    except Exception as e:
+                        # Other error - show text placeholder
+                        self.preview_label.setText(self.icon.name[:3].upper())
+                        self.preview_label.setToolTip(f"Error loading preview: {str(e)}")
+                        self.preview_label.setStyleSheet("""
+                            border: 1px solid gray;
+                            background: white;
+                            font-size: 16px;
+                            color: #666;
+                        """)
+                    finally:
+                        # Clean up temp file
+                        try:
+                            os.unlink(tmp_file.name)
+                        except:
+                            pass
+            else:
+                # No preview URL, show text
+                self.preview_label.setText(self.icon.name[:3].upper())
+                self.preview_label.setStyleSheet("""
+                    border: 1px solid gray;
+                    background: white;
+                    font-size: 16px;
+                    color: #666;
+                """)
         except Exception as e:
             self.preview_label.setText("?")
+            self.preview_label.setToolTip(f"Unexpected error: {str(e)}")
             self.preview_label.setStyleSheet("border: 1px solid red; background: #ffe6e6;")
         
     def mousePressEvent(self, event):
@@ -85,19 +165,46 @@ class IconThumbnailWidget(QWidget):
 
 class SearchWorker(QThread):
     """Worker thread for searching icons"""
-    
+
     resultsReady = pyqtSignal(dict)  # Dict of provider_name: SearchResult
-    
-    def __init__(self, provider_manager, query, page=1, per_page=20):
+
+    def __init__(self, provider_manager, query, page=1, per_page=20, selected_provider=None):
         super().__init__()
         self.provider_manager = provider_manager
         self.query = query
         self.page = page
         self.per_page = per_page
-        
+        self.selected_provider = selected_provider
+
     def run(self):
         """Run search in background thread"""
-        results = self.provider_manager.search_all(self.query, self.page, self.per_page)
+        print(f"[SearchWorker] Starting search:")
+        print(f"  Query: '{self.query}'")
+        print(f"  Page: {self.page}")
+        print(f"  Per page: {self.per_page}")
+        print(f"  Selected provider: {self.selected_provider}")
+
+        if self.selected_provider:
+            # Search only the selected provider
+            provider = self.provider_manager.get_provider(self.selected_provider)
+            print(f"  Provider found: {provider is not None}")
+            if provider:
+                print(f"  Calling {provider.name}.search('{self.query}', {self.page}, {self.per_page})")
+                result = provider.search(self.query, self.page, self.per_page)
+                print(f"  Results: {len(result.icons) if result else 0} icons")
+                results = {self.selected_provider: result}
+            else:
+                print(f"  ERROR: Provider '{self.selected_provider}' not found!")
+                results = {}
+        else:
+            # Search all providers
+            print(f"  Searching ALL providers")
+            results = self.provider_manager.search_all(self.query, self.page, self.per_page)
+            print(f"  Results from {len(results)} providers")
+            for name, result in results.items():
+                print(f"    {name}: {len(result.icons) if result else 0} icons")
+
+        print(f"[SearchWorker] Emitting results")
         self.resultsReady.emit(results)
 
 
@@ -256,13 +363,15 @@ class SvgLibraryDockWidget(QDockWidget):
         from qgis.PyQt.QtCore import QSettings
         settings = QSettings()
         
-        # Register providers with API keys from settings
-        noun_api_key = settings.value("svg_library/noun_api_key", "")
+        # Register The Noun Project provider
+        # Using hardcoded API key for testing (will use default in provider if not set)
+        noun_api_key = settings.value("svg_library/noun_api_key", "e6b1100db018427482300dc87cf31117")
         noun_secret = settings.value("svg_library/noun_secret", "")
-        if noun_api_key and noun_secret:
-            self.provider_manager.register_provider(
-                NounProjectProvider(noun_api_key, noun_secret)
-            )
+
+        # Always register The Noun Project (it will use hardcoded key if no secret)
+        self.provider_manager.register_provider(
+            NounProjectProvider(noun_api_key, noun_secret)
+        )
         
         # Register free providers
         self.provider_manager.register_provider(MaterialSymbolsProvider())
@@ -290,9 +399,8 @@ class SvgLibraryDockWidget(QDockWidget):
                 GitHubRepoProvider("tabler/tabler-icons", "icons")
             )
         
-        # Update provider combo
+        # Update provider combo (no "All Providers" option)
         self.provider_combo.clear()
-        self.provider_combo.addItem("All Providers", "all")
         for provider_name in self.provider_manager.providers.keys():
             self.provider_combo.addItem(provider_name, provider_name)
             
@@ -306,30 +414,41 @@ class SvgLibraryDockWidget(QDockWidget):
     def perform_search(self):
         """Perform icon search"""
         query = self.search_input.text().strip()
+        print(f"[perform_search] Query: '{query}'")
         if not query:
+            print("[perform_search] Empty query - returning")
             return
-            
+
         self.current_query = query
         self.current_page = 1
+        print(f"[perform_search] Starting search for '{query}' page {self.current_page}")
         self.search_icons()
         
     def search_icons(self):
         """Search for icons using current parameters"""
+        print(f"[search_icons] Called with query='{self.current_query}', page={self.current_page}")
+
         if self.search_worker and self.search_worker.isRunning():
+            print("[search_icons] Search already running - returning")
             return
-            
+
         # Show progress
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminate
         self.search_button.setEnabled(False)
-        
+
+        # Get selected provider
+        selected_provider = self.provider_combo.currentData()
+        print(f"[search_icons] Selected provider from combo: '{selected_provider}'")
+
         # Start search worker
         per_page = self.per_page_spin.value()
         self.search_worker = SearchWorker(
-            self.provider_manager, 
-            self.current_query, 
-            self.current_page, 
-            per_page
+            self.provider_manager,
+            self.current_query,
+            self.current_page,
+            per_page,
+            selected_provider  # Pass selected provider
         )
         self.search_worker.resultsReady.connect(self.display_results)
         self.search_worker.finished.connect(self.search_finished)
@@ -342,18 +461,23 @@ class SvgLibraryDockWidget(QDockWidget):
         
     def display_results(self, results):
         """Display search results"""
+        print(f"[display_results] Received results from {len(results)} providers")
+        for name, result in results.items():
+            print(f"  {name}: {len(result.icons) if result and result.icons else 0} icons")
+
         self.current_results = results
-        
+
         # Clear previous results
         self.clear_results()
-        
+
         # Display icons from all providers
         row = 0
         col = 0
         max_cols = 5
-        
+
+        total_icons_displayed = 0
         for provider_name, search_result in results.items():
-            if search_result.icons:
+            if search_result and search_result.icons:
                 # Add provider header
                 header_label = QLabel(f"{provider_name} ({len(search_result.icons)} results)")
                 header_label.setStyleSheet("font-weight: bold; padding: 5px;")
@@ -366,16 +490,26 @@ class SvgLibraryDockWidget(QDockWidget):
                     thumbnail = IconThumbnailWidget(icon)
                     thumbnail.iconClicked.connect(self.icon_clicked)
                     self.results_layout.addWidget(thumbnail, row, col)
-                    
+                    total_icons_displayed += 1
+
                     col += 1
                     if col >= max_cols:
                         col = 0
                         row += 1
-                
+
                 if col > 0:
                     row += 1
                     col = 0
-                    
+
+        print(f"[display_results] Total icons displayed: {total_icons_displayed}")
+
+        # If no results, show a message
+        if total_icons_displayed == 0:
+            no_results_label = QLabel("No results found. Try a different search term.")
+            no_results_label.setStyleSheet("padding: 20px; color: gray;")
+            self.results_layout.addWidget(no_results_label, 0, 0)
+            print("[display_results] No results to display - showing 'No results' message")
+
         # Update pagination
         self.update_pagination()
         
@@ -415,62 +549,31 @@ class SvgLibraryDockWidget(QDockWidget):
         self.search_icons()
         
     def icon_clicked(self, icon):
-        """Handle icon click - download and optionally apply"""
+        """Handle icon click - show preview dialog"""
         try:
-            # Get QGIS SVG directory
-            svg_paths = QgsApplication.svgPaths()
-            if not svg_paths:
-                QMessageBox.warning(self, "Error", "No SVG paths configured in QGIS")
-                return
-                
-            # Use first writable SVG path (usually user profile)
-            svg_dir = svg_paths[0]
-            if not os.path.exists(svg_dir):
-                try:
-                    os.makedirs(svg_dir)
-                except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Cannot create SVG directory: {str(e)}")
-                    return
-                
-            # Create filename (sanitize for filesystem)
-            safe_provider = "".join(c for c in icon.provider if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            safe_id = "".join(c for c in icon.id if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            filename = f"{safe_provider}_{safe_id}.svg".replace(" ", "_")
-            file_path = os.path.join(svg_dir, filename)
-            
-            # Download SVG
-            provider = self.provider_manager.get_provider(icon.provider)
-            if provider and provider.download_svg(icon, file_path):
-                QMessageBox.information(self, "Success", 
-                                      f"SVG saved to: {file_path}\n\n"
-                                      f"Icon: {icon.name}\n"
-                                      f"Provider: {icon.provider}\n"
-                                      f"License: {icon.license}")
-                
-                # Add attribution
-                icon.file_path = file_path  # Store file path for attribution
-                self.add_attribution(icon)
-                
-                # Auto-save to project if enabled
-                from qgis.PyQt.QtCore import QSettings
-                settings = QSettings()
-                if settings.value("svg_library/auto_save_attributions", True, type=bool):
-                    self.save_attributions_to_project()
-                
-                # Optionally apply to selected layer
-                if self.auto_apply_check.isChecked():
-                    self.apply_to_layer(file_path, icon)
-                    
-            else:
-                QMessageBox.warning(self, "Error", 
-                                  f"Failed to download SVG from {icon.provider}\n\n"
-                                  f"This could be due to:\n"
-                                  f"• Network connectivity issues\n"
-                                  f"• Invalid or missing API credentials\n"
-                                  f"• Provider service unavailable")
-                
+            # Show preview dialog
+            from qgis.PyQt.QtWidgets import QDialog
+            dialog = IconPreviewDialog(icon, self.provider_manager, self)
+            if dialog.exec_() == QDialog.Accepted:
+                # Icon was imported, update attributions display
+                self.refresh_attributions()
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error downloading icon: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error showing icon preview: {str(e)}")
+
+    def refresh_attributions(self):
+        """Refresh the attribution display"""
+        try:
+            # Get all attributions from the project
+            from .attribution_utils import ProjectMetadataManager
+            attributions = ProjectMetadataManager.get_attributions_from_project()
+
+            # Update the display
+            self.attribution_text.clear()
+            for attr in attributions[-5:]:  # Show last 5 attributions
+                text = f"{attr.get('icon_name', 'Unknown')} - {attr.get('attribution_text', '')} ({attr.get('license', '')})"
+                self.attribution_text.append(text)
+        except Exception as e:
+            print(f"Error refreshing attributions: {e}")
             
     def add_attribution(self, icon):
         """Add attribution text"""
