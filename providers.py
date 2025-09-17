@@ -90,6 +90,11 @@ class NounProjectProvider(IconProvider):
             'oauth_version': '1.0'
         }
 
+        print(f"[OAuth Debug] Method: {method}")
+        print(f"[OAuth Debug] Base URL: {url}")
+        print(f"[OAuth Debug] Params: {params}")
+        print(f"[OAuth Debug] OAuth params: {oauth_params}")
+
         # Combine all parameters
         all_params = {**params, **oauth_params}
 
@@ -101,11 +106,19 @@ class NounProjectProvider(IconProvider):
         sorted_params = sorted(all_params.items())
         param_string = '&'.join([f"{percent_encode(k)}={percent_encode(v)}" for k, v in sorted_params])
 
-        # Create signature base string
-        signature_base = f"{method}&{percent_encode(url)}&{percent_encode(param_string)}"
+        print(f"[OAuth Debug] Sorted params string: {param_string[:100]}...")
 
-        # Create signing key
-        signing_key = f"{percent_encode(self.secret)}&"
+        # Create signature base string
+        # IMPORTANT: Use base URL without query parameters
+        base_url = url.split('?')[0]
+        signature_base = f"{method}&{percent_encode(base_url)}&{percent_encode(param_string)}"
+
+        print(f"[OAuth Debug] Signature base (first 200): {signature_base[:200]}...")
+
+        # Create signing key - IMPORTANT: Don't encode the secret in signing key
+        signing_key = f"{self.secret}&"
+
+        print(f"[OAuth Debug] Signing key (hidden): {len(signing_key)} chars")
 
         # Generate signature
         signature = base64.b64encode(
@@ -115,6 +128,8 @@ class NounProjectProvider(IconProvider):
                 hashlib.sha1
             ).digest()
         ).decode('utf-8')
+
+        print(f"[OAuth Debug] Generated signature: {signature[:20]}...")
 
         oauth_params['oauth_signature'] = signature
         return oauth_params
@@ -127,7 +142,8 @@ class NounProjectProvider(IconProvider):
 
         try:
             # API endpoint - use v1 which is more stable
-            endpoint = f"{self.base_url}/icons/{quote(query)}"
+            # IMPORTANT: Don't URL-encode the query in the path for OAuth signature
+            endpoint = f"{self.base_url}/icons/{query}"
 
             # Query parameters for v1 API
             params = {
@@ -166,7 +182,9 @@ class NounProjectProvider(IconProvider):
                 print(f"[NounProject] Full endpoint URL: {endpoint}")
                 print(f"[NounProject] Query params: {params}")
 
-                oauth_params = self._generate_oauth_signature('GET', endpoint, params)
+                # IMPORTANT: Pass the base endpoint without query params for signature
+                base_endpoint = endpoint.split('?')[0]
+                oauth_params = self._generate_oauth_signature('GET', base_endpoint, params)
 
                 # Format OAuth header with proper percent encoding
                 auth_header = 'OAuth ' + ', '.join([
