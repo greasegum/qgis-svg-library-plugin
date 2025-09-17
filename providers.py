@@ -93,15 +93,19 @@ class NounProjectProvider(IconProvider):
         # Combine all parameters
         all_params = {**params, **oauth_params}
 
-        # Sort and encode parameters
+        # Sort and encode parameters using RFC3986 percent encoding
+        def percent_encode(s):
+            """RFC3986 compliant percent encoding"""
+            return quote(str(s), safe='~')
+
         sorted_params = sorted(all_params.items())
-        param_string = '&'.join([f"{quote(k)}={quote(str(v))}" for k, v in sorted_params])
+        param_string = '&'.join([f"{percent_encode(k)}={percent_encode(v)}" for k, v in sorted_params])
 
         # Create signature base string
-        signature_base = f"{method}&{quote(url)}&{quote(param_string)}"
+        signature_base = f"{method}&{percent_encode(url)}&{percent_encode(param_string)}"
 
         # Create signing key
-        signing_key = f"{self.secret}&"
+        signing_key = f"{percent_encode(self.secret)}&"
 
         # Generate signature
         signature = base64.b64encode(
@@ -159,13 +163,17 @@ class NounProjectProvider(IconProvider):
                 print(f"[NounProject] API Key: {self.api_key[:10]}..." if self.api_key else "[NounProject] No API key!")
                 print(f"[NounProject] Secret: {'Present' if self.secret else 'Missing'}")
                 print(f"[NounProject] Using v1 API endpoint")
+                print(f"[NounProject] Full endpoint URL: {endpoint}")
+                print(f"[NounProject] Query params: {params}")
 
                 oauth_params = self._generate_oauth_signature('GET', endpoint, params)
 
+                # Format OAuth header with proper percent encoding
                 auth_header = 'OAuth ' + ', '.join([
-                    f'{k}="{quote(str(v))}"' for k, v in oauth_params.items()
+                    f'{k}="{quote(str(v), safe="~")}"' for k, v in oauth_params.items()
                 ])
-                print(f"[NounProject] OAuth header: {auth_header[:100]}...")
+                print(f"[NounProject] OAuth header (first 200 chars): {auth_header[:200]}")
+                print(f"[NounProject] OAuth signature: {oauth_params.get('oauth_signature', 'N/A')[:20]}...")
 
                 url = f"{endpoint}?{urlencode(params)}"
                 print(f"[NounProject] Request URL: {url}")
