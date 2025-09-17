@@ -64,6 +64,8 @@ class NounProjectProvider(IconProvider):
         # Use provided keys or decode obfuscated ones for testing
         self.api_key = api_key or self._deobfuscate(self._OBFUSCATED_KEY)
         self.secret = secret or self._deobfuscate(self._OBFUSCATED_SECRET)
+        print(f"[NounProject Init] API key loaded: {self.api_key[:10]}..." if self.api_key else "[NounProject Init] No API key")
+        print(f"[NounProject Init] Secret loaded: {'Yes' if self.secret else 'No'}")
 
     def _deobfuscate(self, obfuscated: str) -> str:
         """Deobfuscate base64 encoded string"""
@@ -131,24 +133,40 @@ class NounProjectProvider(IconProvider):
 
             # Use requests-oauthlib if available (more reliable OAuth)
             if HAS_REQUESTS:
+                print(f"[NounProject] Using requests-oauthlib for OAuth")
+                print(f"[NounProject] API Key: {self.api_key[:10]}..." if self.api_key else "[NounProject] No API key!")
+                print(f"[NounProject] Secret: {'Present' if self.secret else 'Missing'}")
+
                 auth = OAuth1(self.api_key, self.secret)
                 url = f"{endpoint}?{urlencode(params)}"
+                print(f"[NounProject] Request URL: {url}")
+
                 response = requests.get(url, auth=auth, timeout=10)
+                print(f"[NounProject] Response status: {response.status_code}")
 
                 if response.status_code != 200:
-                    print(f"Noun Project API error: {response.status_code}")
+                    print(f"Noun Project API error: HTTP Error {response.status_code}: {response.reason}")
+                    if response.text:
+                        print(f"[NounProject] Response body: {response.text[:500]}")
                     return SearchResult([], 0, page, 0, False, False)
 
                 data = response.json()
+                print(f"[NounProject] Response JSON keys: {list(data.keys()) if data else 'None'}")
             else:
                 # Fallback to manual OAuth (may have issues)
+                print(f"[NounProject] Using manual OAuth (urllib)")
+                print(f"[NounProject] API Key: {self.api_key[:10]}..." if self.api_key else "[NounProject] No API key!")
+                print(f"[NounProject] Secret: {'Present' if self.secret else 'Missing'}")
+
                 oauth_params = self._generate_oauth_signature('GET', endpoint, params)
 
                 auth_header = 'OAuth ' + ', '.join([
                     f'{k}="{quote(str(v))}"' for k, v in oauth_params.items()
                 ])
+                print(f"[NounProject] OAuth header: {auth_header[:100]}...")
 
                 url = f"{endpoint}?{urlencode(params)}"
+                print(f"[NounProject] Request URL: {url}")
 
                 req = urllib.request.Request(url)
                 req.add_header('Authorization', auth_header)
@@ -157,9 +175,11 @@ class NounProjectProvider(IconProvider):
                 # Use SSL context to handle certificate issues
                 response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
                 data = json.loads(response.read())
+                print(f"[NounProject] Response received, JSON keys: {list(data.keys()) if data else 'None'}")
 
             # Parse results
             icons = []
+            print(f"[NounProject] Parsing {len(data.get('icons', []))} icons from response")
             for item in data.get('icons', []):
                 icon = SvgIcon(
                     id=str(item.get('id', '')),
@@ -187,7 +207,10 @@ class NounProjectProvider(IconProvider):
             )
 
         except Exception as e:
+            import traceback
             print(f"Noun Project API error: {e}")
+            print(f"[NounProject] Full error traceback:")
+            traceback.print_exc()
             # No fallback - return empty
             return SearchResult([], 0, page, 0, False, False)
 
