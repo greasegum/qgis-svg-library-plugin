@@ -20,6 +20,14 @@ except ImportError:
     # For standalone testing
     from icon_providers import IconProvider, SvgIcon, SearchResult
 
+# Try to use requests-oauthlib if available (better OAuth implementation)
+try:
+    import requests
+    from requests_oauthlib import OAuth1
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
+
 
 class NounProjectProvider(IconProvider):
     """Provider for The Noun Project icons with OAuth 1.0a authentication"""
@@ -46,11 +54,16 @@ class NounProjectProvider(IconProvider):
     def _generate_oauth_signature(self, method, url, params):
         """Generate OAuth 1.0a signature"""
         # OAuth parameters
+        # Generate a simple alphanumeric nonce like requests-oauthlib does
+        import random
+        import string
+        nonce = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+
         oauth_params = {
             'oauth_consumer_key': self.api_key,
             'oauth_signature_method': 'HMAC-SHA1',
             'oauth_timestamp': str(int(time.time())),
-            'oauth_nonce': base64.b64encode(os.urandom(32)).decode('utf-8'),
+            'oauth_nonce': nonce,
             'oauth_version': '1.0'
         }
 
@@ -86,33 +99,42 @@ class NounProjectProvider(IconProvider):
             return SearchResult([], 0, page, 0, False, False)
 
         try:
-            # API endpoint - use v1 endpoint which is more stable
-            endpoint = f"{self.base_url}/icons/{query}"
+            # API endpoint - v2 uses /icon with query parameter
+            endpoint = f"{self.base_url}/v2/icon"
 
-            # Query parameters for pagination
+            # Query parameters
             params = {
-                'limit': str(per_page),
-                'offset': str((page - 1) * per_page)
+                'query': query,
+                'limit': str(per_page)
             }
 
-            # Generate OAuth signature
-            oauth_params = self._generate_oauth_signature('GET', endpoint, params)
+            # Use requests-oauthlib if available (more reliable OAuth)
+            if HAS_REQUESTS:
+                auth = OAuth1(self.api_key, self.secret)
+                url = f"{endpoint}?{urlencode(params)}"
+                response = requests.get(url, auth=auth, timeout=10)
 
-            # Build Authorization header
-            auth_header = 'OAuth ' + ', '.join([
-                f'{k}="{quote(str(v))}"' for k, v in oauth_params.items()
-            ])
+                if response.status_code != 200:
+                    print(f"Noun Project API error: {response.status_code}")
+                    return SearchResult([], 0, page, 0, False, False)
 
-            # Build URL with query parameters
-            url = f"{endpoint}?{urlencode(params)}"
+                data = response.json()
+            else:
+                # Fallback to manual OAuth (may have issues)
+                oauth_params = self._generate_oauth_signature('GET', endpoint, params)
 
-            # Make request
-            req = urllib.request.Request(url)
-            req.add_header('Authorization', auth_header)
-            req.add_header('Accept', 'application/json')
+                auth_header = 'OAuth ' + ', '.join([
+                    f'{k}="{quote(str(v))}"' for k, v in oauth_params.items()
+                ])
 
-            response = urllib.request.urlopen(req, timeout=10)
-            data = json.loads(response.read())
+                url = f"{endpoint}?{urlencode(params)}"
+
+                req = urllib.request.Request(url)
+                req.add_header('Authorization', auth_header)
+                req.add_header('Accept', 'application/json')
+
+                response = urllib.request.urlopen(req, timeout=10)
+                data = json.loads(response.read())
 
             # Parse results
             icons = []
