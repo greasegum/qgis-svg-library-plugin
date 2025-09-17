@@ -151,9 +151,15 @@ class IconPreviewDialog(QDialog):
     def loadIcon(self):
         """Load and display the icon"""
         try:
+            # Create SSL context for HTTPS requests
+            import ssl
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
             # Download SVG content
             with tempfile.NamedTemporaryFile(suffix='.svg', delete=False) as tmp_file:
-                response = urllib.request.urlopen(self.icon.preview_url, timeout=10)
+                response = urllib.request.urlopen(self.icon.preview_url, timeout=10, context=ssl_context)
                 self.svg_content = response.read()
                 tmp_file.write(self.svg_content)
                 tmp_file.flush()

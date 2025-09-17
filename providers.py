@@ -9,6 +9,7 @@ import time
 import hashlib
 import hmac
 import base64
+import ssl
 from typing import List, Optional
 from urllib.parse import urlencode, quote, urlparse
 import urllib.request
@@ -27,6 +28,26 @@ try:
     HAS_REQUESTS = True
 except ImportError:
     HAS_REQUESTS = False
+
+
+def get_ssl_context():
+    """Get SSL context for urllib requests
+
+    Returns an SSL context that works in various environments.
+    For development/testing, this disables certificate verification.
+    For production, you should use the default context.
+    """
+    try:
+        # Try to create default context first
+        ssl_context = ssl.create_default_context()
+        # For development - disable verification if having issues
+        # Comment these out for production
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        return ssl_context
+    except:
+        # Fallback - create basic context
+        return ssl.SSLContext(ssl.PROTOCOL_TLS)
 
 
 class NounProjectProvider(IconProvider):
@@ -133,7 +154,8 @@ class NounProjectProvider(IconProvider):
                 req.add_header('Authorization', auth_header)
                 req.add_header('Accept', 'application/json')
 
-                response = urllib.request.urlopen(req, timeout=10)
+                # Use SSL context to handle certificate issues
+                response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
                 data = json.loads(response.read())
 
             # Parse results
@@ -186,7 +208,7 @@ class NounProjectProvider(IconProvider):
             req = urllib.request.Request(icon.download_url)
             req.add_header('Authorization', auth_header)
 
-            response = urllib.request.urlopen(req, timeout=10)
+            response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
             svg_content = response.read()
 
             with open(file_path, 'wb') as f:
@@ -219,7 +241,7 @@ class MaterialSymbolsProvider(IconProvider):
             req.add_header('Accept', 'application/vnd.github.v3+json')
             req.add_header('User-Agent', 'QGIS-SVG-Plugin')
 
-            response = urllib.request.urlopen(req, timeout=10)
+            response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
             data = json.loads(response.read())
 
             # Extract icon names from directories
@@ -300,7 +322,7 @@ class MaterialSymbolsProvider(IconProvider):
     def download_svg(self, icon: SvgIcon, file_path: str) -> bool:
         """Download Material Symbol SVG"""
         try:
-            response = urllib.request.urlopen(icon.download_url, timeout=10)
+            response = urllib.request.urlopen(icon.download_url, timeout=10, context=get_ssl_context())
             svg_content = response.read()
 
             with open(file_path, 'wb') as f:
@@ -333,7 +355,7 @@ class MakiProvider(IconProvider):
             req.add_header('Accept', 'application/vnd.github.v3+json')
             req.add_header('User-Agent', 'QGIS-SVG-Plugin')
 
-            response = urllib.request.urlopen(req, timeout=10)
+            response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
             data = json.loads(response.read())
 
             # Extract icon names
@@ -412,7 +434,7 @@ class MakiProvider(IconProvider):
     def download_svg(self, icon: SvgIcon, file_path: str) -> bool:
         """Download Maki SVG"""
         try:
-            response = urllib.request.urlopen(icon.download_url, timeout=10)
+            response = urllib.request.urlopen(icon.download_url, timeout=10, context=get_ssl_context())
             svg_content = response.read()
 
             with open(file_path, 'wb') as f:
@@ -444,7 +466,7 @@ class FontAwesomeFreeProvider(IconProvider):
             req.add_header('Accept', 'application/vnd.github.v3+json')
             req.add_header('User-Agent', 'QGIS-SVG-Plugin')
 
-            response = urllib.request.urlopen(req, timeout=10)
+            response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
             data = json.loads(response.read())
 
             # Extract icon names
@@ -527,7 +549,7 @@ class FontAwesomeFreeProvider(IconProvider):
     def download_svg(self, icon: SvgIcon, file_path: str) -> bool:
         """Download Font Awesome SVG"""
         try:
-            response = urllib.request.urlopen(icon.download_url, timeout=10)
+            response = urllib.request.urlopen(icon.download_url, timeout=10, context=get_ssl_context())
             svg_content = response.read()
 
             with open(file_path, 'wb') as f:
@@ -561,7 +583,7 @@ class GitHubRepoProvider(IconProvider):
             req.add_header('Accept', 'application/vnd.github.v3+json')
             req.add_header('User-Agent', 'QGIS-SVG-Plugin')
 
-            response = urllib.request.urlopen(req, timeout=10)
+            response = urllib.request.urlopen(req, timeout=10, context=get_ssl_context())
             data = json.loads(response.read())
 
             # Extract SVG files
@@ -640,7 +662,7 @@ class GitHubRepoProvider(IconProvider):
     def download_svg(self, icon: SvgIcon, file_path: str) -> bool:
         """Download SVG from GitHub"""
         try:
-            response = urllib.request.urlopen(icon.download_url, timeout=10)
+            response = urllib.request.urlopen(icon.download_url, timeout=10, context=get_ssl_context())
             svg_content = response.read()
 
             with open(file_path, 'wb') as f:

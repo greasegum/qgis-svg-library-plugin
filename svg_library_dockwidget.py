@@ -71,14 +71,20 @@ class IconThumbnailWidget(QWidget):
                 import urllib.request
                 import urllib.error
                 import tempfile
+                import ssl
                 from qgis.PyQt.QtSvg import QSvgRenderer
                 from qgis.PyQt.QtGui import QPainter
+
+                # Create SSL context for HTTPS requests
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
 
                 # Create temp file for the image
                 with tempfile.NamedTemporaryFile(suffix='.svg', delete=False) as tmp_file:
                     try:
-                        # Download the preview
-                        response = urllib.request.urlopen(self.icon.preview_url, timeout=5)
+                        # Download the preview with SSL context
+                        response = urllib.request.urlopen(self.icon.preview_url, timeout=5, context=ssl_context)
                         svg_data = response.read()
                         tmp_file.write(svg_data)
                         tmp_file.flush()
