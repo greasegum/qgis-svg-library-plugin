@@ -24,11 +24,11 @@ except ImportError:
 class NounProjectProvider(IconProvider):
     """Provider for The Noun Project icons with OAuth 1.0a authentication"""
 
-    # Obfuscated API key for testing - base64 encoded
+    # Obfuscated API credentials for testing - base64 encoded
     # This provides minimal obfuscation to avoid plaintext exposure
     # Not for production use - implement proper key management
-    _OBFUSCATED_KEY = "ZTZiMTEwMGRiMDE4NDI3NDgyMzAwZGM4N2NmMzExMTc="  # base64 of the key
-    _OBFUSCATED_SECRET = "WU9VUl9TRUNSRVRfSEVSRQ=="  # base64 of "YOUR_SECRET_HERE"
+    _OBFUSCATED_KEY = "ZTZiMTEwMGRiMDE4NDI3NDgyMzAwZGM4N2NmMzExMTc="  # base64 of API key
+    _OBFUSCATED_SECRET = "ZWJmN2YyZmE1Mzk3NGRhZWE1NzAzNTgyMmVjNjVhOTA="  # base64 of API secret
 
     def __init__(self, api_key: Optional[str] = None, secret: Optional[str] = None):
         super().__init__("The Noun Project", "https://api.thenounproject.com", api_key)
@@ -86,12 +86,11 @@ class NounProjectProvider(IconProvider):
             return SearchResult([], 0, page, 0, False, False)
 
         try:
-            # API endpoint
-            endpoint = f"{self.base_url}/v2/icon"
+            # API endpoint - use v1 endpoint which is more stable
+            endpoint = f"{self.base_url}/icons/{query}"
 
-            # Query parameters
+            # Query parameters for pagination
             params = {
-                'query': query,
                 'limit': str(per_page),
                 'offset': str((page - 1) * per_page)
             }
