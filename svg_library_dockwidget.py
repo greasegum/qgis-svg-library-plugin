@@ -66,6 +66,7 @@ class IconThumbnailWidget(QWidget):
         """Load preview image from URL"""
         try:
             if self.icon.preview_url:
+                print(f"[IconThumbnail] Loading preview for {self.icon.name} from {self.icon.preview_url[:50]}...")
                 # Download the preview image
                 import urllib.request
                 import urllib.error
@@ -171,17 +172,33 @@ class SearchWorker(QThread):
 
     def run(self):
         """Run search in background thread"""
+        print(f"[SearchWorker] Starting search:")
+        print(f"  Query: '{self.query}'")
+        print(f"  Page: {self.page}")
+        print(f"  Per page: {self.per_page}")
+        print(f"  Selected provider: {self.selected_provider}")
+
         if self.selected_provider:
             # Search only the selected provider
             provider = self.provider_manager.get_provider(self.selected_provider)
+            print(f"  Provider found: {provider is not None}")
             if provider:
+                print(f"  Calling {provider.name}.search('{self.query}', {self.page}, {self.per_page})")
                 result = provider.search(self.query, self.page, self.per_page)
+                print(f"  Results: {len(result.icons) if result else 0} icons")
                 results = {self.selected_provider: result}
             else:
+                print(f"  ERROR: Provider '{self.selected_provider}' not found!")
                 results = {}
         else:
             # Search all providers
+            print(f"  Searching ALL providers")
             results = self.provider_manager.search_all(self.query, self.page, self.per_page)
+            print(f"  Results from {len(results)} providers")
+            for name, result in results.items():
+                print(f"    {name}: {len(result.icons) if result else 0} icons")
+
+        print(f"[SearchWorker] Emitting results")
         self.resultsReady.emit(results)
 
 
@@ -391,25 +408,32 @@ class SvgLibraryDockWidget(QDockWidget):
     def perform_search(self):
         """Perform icon search"""
         query = self.search_input.text().strip()
+        print(f"[perform_search] Query: '{query}'")
         if not query:
+            print("[perform_search] Empty query - returning")
             return
-            
+
         self.current_query = query
         self.current_page = 1
+        print(f"[perform_search] Starting search for '{query}' page {self.current_page}")
         self.search_icons()
         
     def search_icons(self):
         """Search for icons using current parameters"""
+        print(f"[search_icons] Called with query='{self.current_query}', page={self.current_page}")
+
         if self.search_worker and self.search_worker.isRunning():
+            print("[search_icons] Search already running - returning")
             return
-            
+
         # Show progress
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminate
         self.search_button.setEnabled(False)
-        
+
         # Get selected provider
         selected_provider = self.provider_combo.currentData()
+        print(f"[search_icons] Selected provider from combo: '{selected_provider}'")
 
         # Start search worker
         per_page = self.per_page_spin.value()
@@ -431,18 +455,23 @@ class SvgLibraryDockWidget(QDockWidget):
         
     def display_results(self, results):
         """Display search results"""
+        print(f"[display_results] Received results from {len(results)} providers")
+        for name, result in results.items():
+            print(f"  {name}: {len(result.icons) if result and result.icons else 0} icons")
+
         self.current_results = results
-        
+
         # Clear previous results
         self.clear_results()
-        
+
         # Display icons from all providers
         row = 0
         col = 0
         max_cols = 5
-        
+
+        total_icons_displayed = 0
         for provider_name, search_result in results.items():
-            if search_result.icons:
+            if search_result and search_result.icons:
                 # Add provider header
                 header_label = QLabel(f"{provider_name} ({len(search_result.icons)} results)")
                 header_label.setStyleSheet("font-weight: bold; padding: 5px;")
@@ -455,16 +484,26 @@ class SvgLibraryDockWidget(QDockWidget):
                     thumbnail = IconThumbnailWidget(icon)
                     thumbnail.iconClicked.connect(self.icon_clicked)
                     self.results_layout.addWidget(thumbnail, row, col)
-                    
+                    total_icons_displayed += 1
+
                     col += 1
                     if col >= max_cols:
                         col = 0
                         row += 1
-                
+
                 if col > 0:
                     row += 1
                     col = 0
-                    
+
+        print(f"[display_results] Total icons displayed: {total_icons_displayed}")
+
+        # If no results, show a message
+        if total_icons_displayed == 0:
+            no_results_label = QLabel("No results found. Try a different search term.")
+            no_results_label.setStyleSheet("padding: 20px; color: gray;")
+            self.results_layout.addWidget(no_results_label, 0, 0)
+            print("[display_results] No results to display - showing 'No results' message")
+
         # Update pagination
         self.update_pagination()
         
