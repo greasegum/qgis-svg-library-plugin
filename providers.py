@@ -122,13 +122,13 @@ class NounProjectProvider(IconProvider):
             return SearchResult([], 0, page, 0, False, False)
 
         try:
-            # API endpoint - v2 uses /icon with query parameter
-            endpoint = f"{self.base_url}/v2/icon"
+            # API endpoint - use v1 which is more stable
+            endpoint = f"{self.base_url}/icons/{quote(query)}"
 
-            # Query parameters
+            # Query parameters for v1 API
             params = {
-                'query': query,
-                'limit': str(per_page)
+                'limit': str(per_page),
+                'offset': str((page - 1) * per_page)
             }
 
             # Use requests-oauthlib if available (more reliable OAuth)
@@ -136,6 +136,7 @@ class NounProjectProvider(IconProvider):
                 print(f"[NounProject] Using requests-oauthlib for OAuth")
                 print(f"[NounProject] API Key: {self.api_key[:10]}..." if self.api_key else "[NounProject] No API key!")
                 print(f"[NounProject] Secret: {'Present' if self.secret else 'Missing'}")
+                print(f"[NounProject] Using v1 API endpoint")
 
                 auth = OAuth1(self.api_key, self.secret)
                 url = f"{endpoint}?{urlencode(params)}"
@@ -157,6 +158,7 @@ class NounProjectProvider(IconProvider):
                 print(f"[NounProject] Using manual OAuth (urllib)")
                 print(f"[NounProject] API Key: {self.api_key[:10]}..." if self.api_key else "[NounProject] No API key!")
                 print(f"[NounProject] Secret: {'Present' if self.secret else 'Missing'}")
+                print(f"[NounProject] Using v1 API endpoint")
 
                 oauth_params = self._generate_oauth_signature('GET', endpoint, params)
 
